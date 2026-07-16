@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from vllm.v1.core.kv_cache_utils import BlockHash
 
 
+REMAIN_TOKEN_HINT_EXTRA_ARG = "_enable_remain_token_hint"
+REMAIN_TOKEN_HINT_TOKEN_IDS = (198, 27, 42000, 58136, 6256, 37467, 29, 198)
+REMAIN_TOKEN_HINT_THRESHOLD = 1024
+QWEN36_THINK_END_TOKEN_ID = 248069
+
+
 @dataclass
 class StreamingUpdate:
     """Lightweight data for streaming session continuation.
@@ -80,6 +86,14 @@ class Request:
         self.sampling_params = sampling_params
         self.pooling_params = pooling_params
         self.lora_request = lora_request
+        extra_args = sampling_params.extra_args if sampling_params is not None else None
+        self.enable_remain_token_hint = bool(
+            extra_args and extra_args.get(REMAIN_TOKEN_HINT_EXTRA_ARG)
+        )
+        self.num_reasoning_tokens = 0
+        self.remain_token_hint_processed = (
+            not self.enable_remain_token_hint or reasoning_ended is True
+        )
         self.structured_output_request = StructuredOutputRequest.from_sampling_params(
             sampling_params
         )

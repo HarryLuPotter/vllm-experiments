@@ -19,6 +19,7 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest,
 )
 from vllm.sampling_params import SamplingParams
+from vllm.v1.request import REMAIN_TOKEN_HINT_EXTRA_ARG
 
 # any model with a chat template should work here
 MODEL_NAME = "HuggingFaceH4/zephyr-7b-beta"
@@ -1000,6 +1001,27 @@ def test_chat_completion_request_n_parameter_default():
 
     # SamplingParams.from_optional converts None to 1
     assert sampling_params.n == 1, f"Expected n=1 (default), got n={sampling_params.n}"
+
+
+@pytest.mark.parametrize("enabled", [True, False, None])
+def test_chat_completion_request_remain_token_hint_to_sampling_params(enabled):
+    chat_template_kwargs = (
+        None if enabled is None else {"enable_remain_token_hint": enabled}
+    )
+    request = ChatCompletionRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=2048,
+        chat_template_kwargs=chat_template_kwargs,
+    )
+
+    sampling_params = request.to_sampling_params(
+        max_tokens=2048,
+        default_sampling_params={},
+    )
+
+    extra_args = sampling_params.extra_args or {}
+    assert (REMAIN_TOKEN_HINT_EXTRA_ARG in extra_args) is (enabled is True)
 
 
 def test_chat_completion_request_n_parameter_various_values():

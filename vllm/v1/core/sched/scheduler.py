@@ -56,7 +56,14 @@ from vllm.v1.kv_cache_interface import AttentionSpec, KVCacheConfig
 from vllm.v1.metrics.perf import ModelMetrics, PerfStats
 from vllm.v1.metrics.stats import PrefixCacheStats, SchedulerStats
 from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
-from vllm.v1.request import Request, RequestStatus, StreamingUpdate
+from vllm.v1.request import (
+    QWEN36_THINK_END_TOKEN_ID,
+    REMAIN_TOKEN_HINT_THRESHOLD,
+    REMAIN_TOKEN_HINT_TOKEN_IDS,
+    Request,
+    RequestStatus,
+    StreamingUpdate,
+)
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
@@ -1631,6 +1638,7 @@ class Scheduler(SchedulerInterface):
         # a request is still being prefilled, we expect the model runner
         # to return empty token ids for the request.
         stopped = False
+        inject_remain_token_hint = False
         for num_new, output_token_id in enumerate(new_token_ids, 1):
             request.append_output_token_ids(output_token_id)
 
@@ -1640,6 +1648,31 @@ class Scheduler(SchedulerInterface):
             if stopped:
                 del new_token_ids[num_new:]  # Trim new tokens if needed.
                 break
+
+            if request.remain_token_hint_processed:
+                continue
+            if output_token_id == QWEN36_THINK_END_TOKEN_ID:
+                request.remain_token_hint_processed = True
+                continue
+
+            request.num_reasoning_tokens += 1
+            if request.num_reasoning_tokens == REMAIN_TOKEN_HINT_THRESHOLD:
+                request.remain_token_hint_processed = True
+                if num_new < len(new_token_ids):
+                    raise RuntimeError(
+                        "Remain-token hint requires non-speculative decoding."
+                    )
+
+                hint_len = len(REMAIN_TOKEN_HINT_TOKEN_IDS)
+                inject_remain_token_hint = (
+                    request.num_output_tokens + hint_len < request.max_tokens
+                    and request.num_tokens + hint_len < self.max_model_len
+                )
+
+        if inject_remain_token_hint:
+            hint_token_ids = list(REMAIN_TOKEN_HINT_TOKEN_IDS)
+            request.append_output_token_ids(hint_token_ids)
+            new_token_ids.extend(hint_token_ids)
         return new_token_ids, stopped
 
     def _free_encoder_inputs(self, request: Request) -> None:

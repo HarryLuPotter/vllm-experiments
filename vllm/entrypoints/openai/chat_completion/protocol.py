@@ -43,6 +43,7 @@ from vllm.sampling_params import (
     StructuredOutputsParams,
 )
 from vllm.utils import random_uuid
+from vllm.v1.request import REMAIN_TOKEN_HINT_EXTRA_ARG
 
 logger = init_logger(__name__)
 
@@ -486,7 +487,9 @@ class ChatCompletionRequest(OpenAIBaseModel):
                     else replace(self.structured_outputs, **structured_outputs_kwargs)
                 )
 
-        extra_args: dict[str, Any] = self.vllm_xargs if self.vllm_xargs else {}
+        extra_args: dict[str, Any] = dict(self.vllm_xargs) if self.vllm_xargs else {}
+        if (self.chat_template_kwargs or {}).get("enable_remain_token_hint") is True:
+            extra_args[REMAIN_TOKEN_HINT_EXTRA_ARG] = True
         if self.kv_transfer_params:
             # Pass in kv_transfer_params via extra_args
             extra_args["kv_transfer_params"] = self.kv_transfer_params

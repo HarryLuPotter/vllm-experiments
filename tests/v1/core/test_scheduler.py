@@ -32,7 +32,14 @@ from vllm.v1.kv_cache_interface import (
     KVCacheGroupSpec,
 )
 from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
-from vllm.v1.request import Request, RequestStatus
+from vllm.v1.request import (
+    QWEN36_THINK_END_TOKEN_ID,
+    REMAIN_TOKEN_HINT_EXTRA_ARG,
+    REMAIN_TOKEN_HINT_THRESHOLD,
+    REMAIN_TOKEN_HINT_TOKEN_IDS,
+    Request,
+    RequestStatus,
+)
 from vllm.v1.structured_output import StructuredOutputManager
 
 from .utils import EOS_TOKEN_ID, create_requests, create_scheduler, mock_kv
@@ -329,6 +336,174 @@ def test_schedule_concurrent_partial_requests(enable_prefix_caching: bool):
     assert output2.num_scheduled_tokens[requests[0].request_id] == 1
     assert output2.num_scheduled_tokens[requests[1].request_id] == 1
     assert output2.num_scheduled_tokens[requests[2].request_id] == 800 - 224 - 224
+
+
+def create_remain_token_hint_request(
+    *,
+    max_tokens: int = 2048,
+    stop_token_ids: list[int] | None = None,
+    request_id: str = "hint",
+) -> Request:
+    sampling_params = SamplingParams(
+        max_tokens=max_tokens,
+        stop_token_ids=stop_token_ids,
+        extra_args={REMAIN_TOKEN_HINT_EXTRA_ARG: True},
+    )
+    sampling_params.update_from_generation_config({}, EOS_TOKEN_ID)
+    return Request(
+        request_id=request_id,
+        prompt_token_ids=[0],
+        sampling_params=sampling_params,
+        pooling_params=None,
+    )
+
+
+def seed_request_before_hint(request: Request) -> None:
+    request.append_output_token_ids([7] * (REMAIN_TOKEN_HINT_THRESHOLD - 1))
+    request.num_reasoning_tokens = REMAIN_TOKEN_HINT_THRESHOLD - 1
+    request.num_computed_tokens = request.num_tokens
+    request.status = RequestStatus.RUNNING
+
+
+def test_remain_token_hint_injection_and_pp_handoff():
+    scheduler = create_scheduler(
+        pipeline_parallel_size=2,
+        max_model_len=4096,
+        max_num_batched_tokens=4096,
+        block_size=2048,
+    )
+    request = create_remain_token_hint_request()
+    seed_request_before_hint(request)
+    scheduler.requests[request.request_id] = request
+    scheduler.running.append(request)
+
+    scheduler_output = SchedulerOutput(
+        scheduled_new_reqs=[],
+        scheduled_cached_reqs=CachedRequestData.make_empty(),
+        num_scheduled_tokens={request.request_id: 1},
+        total_num_scheduled_tokens=1,
+        scheduled_encoder_inputs={},
+        scheduled_spec_decode_tokens={},
+        num_common_prefix_blocks=[],
+        finished_req_ids=set(),
+        free_encoder_mm_hashes=[],
+    )
+    model_output = ModelRunnerOutput(
+        req_ids=[request.request_id],
+        req_id_to_index={request.request_id: 0},
+        sampled_token_ids=[[42]],
+        logprobs=None,
+        prompt_logprobs_dict={},
+        pooler_output=[],
+    )
+
+    outputs = scheduler.update_from_output(scheduler_output, model_output)
+    expected_new_ids = [42, *REMAIN_TOKEN_HINT_TOKEN_IDS]
+    assert outputs[0].outputs[0].new_token_ids == expected_new_ids
+    assert list(request.output_token_ids[-len(expected_new_ids) :]) == expected_new_ids
+    assert request.num_output_tokens == (
+        REMAIN_TOKEN_HINT_THRESHOLD + len(REMAIN_TOKEN_HINT_TOKEN_IDS)
+    )
+
+    scheduler.prev_step_scheduled_req_ids.add(request.request_id)
+    cached_request_data = scheduler._make_cached_request_data(
+        running_reqs=[request],
+        resumed_reqs=[],
+        num_scheduled_tokens={request.request_id: len(expected_new_ids)},
+        spec_decode_tokens={},
+        req_to_new_blocks={
+            request.request_id: scheduler.kv_cache_manager.empty_kv_cache_blocks
+        },
+    )
+    assert cached_request_data is not None
+    assert cached_request_data.new_token_ids == [expected_new_ids]
+
+    request.num_computed_tokens = request.num_tokens
+    next_ids, stopped = scheduler._update_request_with_output(request, [43])
+    assert not stopped
+    assert next_ids == [43]
+
+
+@pytest.mark.parametrize(
+    "output_token_id,stop_token_ids",
+    [
+        (QWEN36_THINK_END_TOKEN_ID, None),
+        (EOS_TOKEN_ID, None),
+        (42, [42]),
+    ],
+)
+def test_remain_token_hint_skipped_when_generation_stops(
+    output_token_id: int, stop_token_ids: list[int] | None
+):
+    scheduler = create_scheduler(max_model_len=4096)
+    request = create_remain_token_hint_request(stop_token_ids=stop_token_ids)
+    seed_request_before_hint(request)
+
+    new_ids, _ = scheduler._update_request_with_output(request, [output_token_id])
+
+    assert new_ids == [output_token_id]
+    assert request.remain_token_hint_processed or request.is_finished()
+
+
+@pytest.mark.parametrize(
+    "max_tokens,max_model_len,expected_stopped",
+    [
+        (REMAIN_TOKEN_HINT_THRESHOLD, 4096, True),
+        (
+            REMAIN_TOKEN_HINT_THRESHOLD + len(REMAIN_TOKEN_HINT_TOKEN_IDS),
+            4096,
+            False,
+        ),
+        (
+            2048,
+            REMAIN_TOKEN_HINT_THRESHOLD + len(REMAIN_TOKEN_HINT_TOKEN_IDS) + 1,
+            False,
+        ),
+    ],
+)
+def test_remain_token_hint_skipped_when_length_is_insufficient(
+    max_tokens: int, max_model_len: int, expected_stopped: bool
+):
+    scheduler = create_scheduler(
+        max_model_len=max_model_len,
+        max_num_batched_tokens=max_model_len,
+    )
+    request = create_remain_token_hint_request(max_tokens=max_tokens)
+    seed_request_before_hint(request)
+
+    new_ids, stopped = scheduler._update_request_with_output(request, [42])
+
+    assert stopped is expected_stopped
+    assert new_ids == [42]
+    assert request.remain_token_hint_processed or request.is_finished()
+
+
+def test_remain_token_hint_request_state_is_isolated():
+    first = create_remain_token_hint_request(request_id="first")
+    second = create_remain_token_hint_request(request_id="second")
+
+    first.num_reasoning_tokens = 123
+    first.remain_token_hint_processed = True
+
+    assert second.num_reasoning_tokens == 0
+    assert not second.remain_token_hint_processed
+
+
+def test_remain_token_hint_disabled_does_not_inject():
+    scheduler = create_scheduler(max_model_len=4096)
+    request = Request(
+        request_id="disabled",
+        prompt_token_ids=[0],
+        sampling_params=SamplingParams(max_tokens=2048),
+        pooling_params=None,
+    )
+    request.append_output_token_ids([7] * (REMAIN_TOKEN_HINT_THRESHOLD - 1))
+
+    new_ids, stopped = scheduler._update_request_with_output(request, [42])
+
+    assert not stopped
+    assert new_ids == [42]
+    assert request.num_reasoning_tokens == 0
 
 
 def test_stop_via_update_from_output():
