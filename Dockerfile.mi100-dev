@@ -1,0 +1,82 @@
+FROM rocm/dev-ubuntu-22.04:7.2.1-complete
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ROCM_PATH=/opt/rocm \
+    VLLM_TARGET_DEVICE=rocm \
+    PYTORCH_ROCM_ARCH=gfx908 \
+    GPU_ARCHS=gfx908 \
+    VLLM_REQUIRE_RUST_FRONTEND=0 \
+    TRITON_KERNELS_SRC_DIR=/opt/triton-3.6.0/python/triton_kernels/triton_kernels \
+    PATH=/opt/rocm/llvm/bin:/opt/rocm/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        git-lfs \
+        ca-certificates \
+        curl \
+        wget \
+        vim \
+        less \
+        build-essential \
+        pkg-config \
+        ninja-build \
+        libnuma-dev \
+        libjpeg-dev \
+        libsox-dev \
+        libsox-fmt-all \
+        sox \
+        libopenmpi-dev \
+        libpci-dev \
+        liblzma-dev \
+        sqlite3 \
+        libsqlite3-dev \
+        libfmt-dev \
+        libmsgpack-dev \
+        libsuitesparse-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir --upgrade \
+        pip \
+        wheel \
+        packaging \
+        "cmake>=3.26.1,<4" \
+        ninja \
+        pybind11 \
+        Cython \
+        "setuptools>=77.0.3,<80.0.0" \
+        "setuptools-scm>=8"
+
+WORKDIR /tmp/vllm-build
+
+COPY requirements/ ./requirements/
+
+RUN python3 -m pip install --no-cache-dir \
+        -r requirements/rocm-build.txt
+
+RUN python3 -m pip install --no-cache-dir \
+        -r requirements/rocm.txt
+
+RUN git clone \
+        --depth 1 \
+        --branch v3.6.0 \
+        https://github.com/triton-lang/triton.git \
+        /opt/triton-3.6.0 \
+    && test -d "${TRITON_KERNELS_SRC_DIR}"
+
+RUN python3 -m pip install --no-cache-dir \
+        /opt/rocm/share/amd_smi
+
+RUN mkdir -p \
+        /workspace/vllm \
+        /workspace/models \
+        /workspace/huggingface-cache
+
+WORKDIR /workspace/vllm
+
+CMD ["/bin/bash"]
