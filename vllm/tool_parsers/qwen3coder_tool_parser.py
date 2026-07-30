@@ -338,6 +338,15 @@ class Qwen3CoderToolParser(ToolParser):
                     if len(function_calls) == 1
                     else None
                 )
+                if (
+                    len(function_calls) == 1
+                    and predicted_tool_execution_time is None
+                ):
+                    logger.warning_once(
+                        "Qwen3 Coder tool call has no valid execution-time "
+                        "prediction. Raw model output: %r",
+                        model_output[:4000],
+                    )
                 for function_call_str in function_calls:
                     tool_call = self._parse_xml_function_call(
                         function_call_str, request.tools
