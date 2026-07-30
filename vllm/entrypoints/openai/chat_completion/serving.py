@@ -1496,14 +1496,27 @@ class OpenAIServingChat(OpenAIServing):
                         # otherwise generate ID with correct id_type
                         if tc.id:
                             tool_call_items.append(
-                                tool_call_class(id=tc.id, function=tc)
+                                tool_call_class(
+                                    id=tc.id,
+                                    function=tc,
+                                    predicted_tool_execution_time_seconds=(
+                                        tc.predicted_tool_execution_time_seconds
+                                    ),
+                                )
                             )
                         else:
                             # Generate ID using the correct format (kimi_k2 or random),
                             # but leave it to the class if it's Mistral to preserve
                             # 9-char IDs
                             if isinstance(tokenizer, MistralTokenizer):
-                                tool_call_items.append(tool_call_class(function=tc))
+                                tool_call_items.append(
+                                    tool_call_class(
+                                        function=tc,
+                                        predicted_tool_execution_time_seconds=(
+                                            tc.predicted_tool_execution_time_seconds
+                                        ),
+                                    )
+                                )
                             else:
                                 generated_id = make_tool_call_id(
                                     id_type=self.tool_call_id_type,
@@ -1511,7 +1524,13 @@ class OpenAIServingChat(OpenAIServing):
                                     idx=history_tool_call_cnt,
                                 )
                                 tool_call_items.append(
-                                    tool_call_class(id=generated_id, function=tc)
+                                    tool_call_class(
+                                        id=generated_id,
+                                        function=tc,
+                                        predicted_tool_execution_time_seconds=(
+                                            tc.predicted_tool_execution_time_seconds
+                                        ),
+                                    )
                                 )
                         history_tool_call_cnt += 1
                     message = ChatMessage(

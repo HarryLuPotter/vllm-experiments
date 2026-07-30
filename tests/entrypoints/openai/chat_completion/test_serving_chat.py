@@ -25,7 +25,10 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
 from vllm.entrypoints.openai.engine.protocol import (
     ErrorResponse,
+    ExtractedToolCallInformation,
+    FunctionCall,
     RequestResponseMetadata,
+    ToolCall,
 )
 from vllm.entrypoints.openai.models.serving import (
     BaseModelPath,
@@ -1790,6 +1793,101 @@ async def test_tool_choice_validation_without_parser():
     assert isinstance(response_named, ErrorResponse)
     assert "tool_choice" in response_named.error.message
     assert "--tool-call-parser" in response_named.error.message
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_tool_call_preserves_execution_time_prediction():
+    class PredictionToolParser:
+        def __init__(self, tokenizer, tools):
+            pass
+
+        def extract_tool_calls(self, model_output, request):
+            return ExtractedToolCallInformation(
+                tools_called=True,
+                tool_calls=[
+                    ToolCall(
+                        id="call_prediction",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments='{"command":"sleep 1"}',
+                        ),
+                        predicted_tool_execution_time_seconds=1.25,
+                    )
+                ],
+                content=None,
+            )
+
+    serving_chat = object.__new__(OpenAIServingChat)
+    serving_chat.response_role = "assistant"
+    serving_chat.tool_call_id_type = "random"
+    serving_chat.use_harmony = False
+    serving_chat.enable_auto_tools = True
+    serving_chat.tool_parser = PredictionToolParser
+    serving_chat.enable_prompt_tokens_details = False
+    serving_chat.enable_log_outputs = False
+    serving_chat.request_logger = None
+
+    request = ChatCompletionRequest(
+        model=MODEL_NAME,
+        messages=[{"role": "user", "content": "Run the command."}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+        tool_choice="auto",
+    )
+    final_output = RequestOutput(
+        request_id="test-request",
+        prompt="test prompt",
+        prompt_token_ids=[1],
+        prompt_logprobs=None,
+        outputs=[
+            CompletionOutput(
+                index=0,
+                text="<tool_call>...</tool_call>",
+                token_ids=[2],
+                cumulative_logprob=0.0,
+                logprobs=None,
+                finish_reason="stop",
+                stop_reason=None,
+            )
+        ],
+        finished=True,
+    )
+
+    async def result_generator():
+        yield final_output
+
+    response = await serving_chat.chat_completion_full_generator(
+        request=request,
+        result_generator=result_generator(),
+        request_id="test-request",
+        model_name=MODEL_NAME,
+        conversation=[],
+        tokenizer=MagicMock(),
+        request_metadata=RequestResponseMetadata(
+            request_id="test-request",
+            model_name=MODEL_NAME,
+        ),
+    )
+
+    assert isinstance(response, ChatCompletionResponse)
+    tool_call = response.choices[0].message.tool_calls[0]
+    assert tool_call.predicted_tool_execution_time_seconds == 1.25
+    assert tool_call.model_dump() == {
+        "id": "call_prediction",
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "arguments": '{"command":"sleep 1"}',
+        },
+        "predicted_tool_execution_time_seconds": 1.25,
+    }
 
 
 class TestCreateRemainingArgsDelta:

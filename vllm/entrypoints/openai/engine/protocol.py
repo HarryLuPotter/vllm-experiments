@@ -220,6 +220,12 @@ class FunctionCall(OpenAIBaseModel):
     # Excluded from serialization to maintain OpenAI API compatibility
     # (function object should only contain 'name' and 'arguments').
     id: str | None = Field(default=None, exclude=True)
+    predicted_tool_execution_time_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+        exclude=True,
+    )
     name: str
     arguments: str
 

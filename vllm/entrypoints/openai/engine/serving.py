@@ -944,6 +944,9 @@ class OpenAIServing:
                         id=tool_call.id,
                         name=tool_call.function.name,
                         arguments=tool_call.function.arguments,
+                        predicted_tool_execution_time_seconds=(
+                            tool_call.predicted_tool_execution_time_seconds
+                        ),
                     )
                     for tool_call in tool_call_info.tool_calls
                 )
