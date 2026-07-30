@@ -42,7 +42,7 @@ from openai.types.chat.chat_completion_content_part_input_audio_param import Inp
 from openai.types.responses import ResponseInputImageParam
 from openai_harmony import Message as OpenAIHarmonyMessage
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 # pydantic needs the TypedDict from typing_extensions
 from typing_extensions import Required, TypedDict
