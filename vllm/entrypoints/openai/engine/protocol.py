@@ -228,6 +228,12 @@ class ToolCall(OpenAIBaseModel):
     id: str = Field(default_factory=make_tool_call_id)
     type: Literal["function"] = "function"
     function: FunctionCall
+    predicted_tool_execution_time_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class DeltaFunctionCall(BaseModel):

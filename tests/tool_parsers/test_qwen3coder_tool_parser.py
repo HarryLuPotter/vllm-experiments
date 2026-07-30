@@ -163,6 +163,94 @@ def test_extract_tool_calls_no_tools(qwen3_tool_parser_parametrized):
     assert extracted_tool_calls.content == model_output
 
 
+def make_tool_call_with_prediction(*predictions: str) -> str:
+    prediction_blocks = "".join(
+        "\n<predicted_tool_execution_time_seconds>\n"
+        f"{prediction}\n"
+        "</predicted_tool_execution_time_seconds>"
+        for prediction in predictions
+    )
+    return (
+        "<tool_call>\n"
+        "<function=calculate_area>\n"
+        "<parameter=shape>\n"
+        "circle\n"
+        "</parameter>\n"
+        "</function>"
+        f"{prediction_blocks}\n"
+        "</tool_call>"
+    )
+
+
+@pytest.mark.parametrize(
+    ("prediction", "expected"),
+    [
+        ("0", 0.0),
+        ("12", 12.0),
+        ("12.5", 12.5),
+        ("120.0", 120.0),
+    ],
+)
+def test_extract_tool_call_with_execution_time_prediction(
+    qwen3_tool_parser, sample_tools, prediction, expected
+):
+    request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
+
+    result = qwen3_tool_parser.extract_tool_calls(
+        make_tool_call_with_prediction(prediction),
+        request,
+    )
+
+    assert result.tools_called
+    assert len(result.tool_calls) == 1
+    tool_call = result.tool_calls[0]
+    assert tool_call.function.name == "calculate_area"
+    assert json.loads(tool_call.function.arguments) == {"shape": "circle"}
+    assert tool_call.predicted_tool_execution_time_seconds == expected
+    assert tool_call.model_dump()["predicted_tool_execution_time_seconds"] == expected
+
+
+@pytest.mark.parametrize(
+    "prediction",
+    ["", "-1", "NaN", "inf", "12.5 seconds", "1e3", "1-2"],
+)
+def test_invalid_execution_time_prediction_is_omitted(
+    qwen3_tool_parser, sample_tools, prediction
+):
+    request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
+
+    result = qwen3_tool_parser.extract_tool_calls(
+        make_tool_call_with_prediction(prediction),
+        request,
+    )
+
+    assert result.tools_called
+    assert len(result.tool_calls) == 1
+    tool_call = result.tool_calls[0]
+    assert tool_call.function.name == "calculate_area"
+    assert tool_call.predicted_tool_execution_time_seconds is None
+    assert "predicted_tool_execution_time_seconds" not in tool_call.model_dump()
+
+
+@pytest.mark.parametrize("predictions", [(), ("1.0", "2.0")])
+def test_missing_or_duplicate_execution_time_prediction_is_omitted(
+    qwen3_tool_parser, sample_tools, predictions
+):
+    request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
+
+    result = qwen3_tool_parser.extract_tool_calls(
+        make_tool_call_with_prediction(*predictions),
+        request,
+    )
+
+    assert result.tools_called
+    assert len(result.tool_calls) == 1
+    tool_call = result.tool_calls[0]
+    assert tool_call.function.name == "calculate_area"
+    assert tool_call.predicted_tool_execution_time_seconds is None
+    assert "predicted_tool_execution_time_seconds" not in tool_call.model_dump()
+
+
 @pytest.mark.parametrize(
     ids=[
         "single_tool",

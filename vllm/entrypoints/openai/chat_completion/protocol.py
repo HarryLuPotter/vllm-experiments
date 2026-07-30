@@ -4,6 +4,7 @@
 # Adapted from
 # https://github.com/lm-sys/FastChat/blob/168ccc29d3f7edc50823016105c024fe2282732a/fastchat/protocol/openai_api_protocol.py
 import json
+import math
 import time
 from typing import Annotated, Any, ClassVar, Literal
 
@@ -522,6 +523,37 @@ class ChatCompletionRequest(OpenAIBaseModel):
             skip_clone=True,  # Created fresh per request, safe to skip clone
             repetition_detection=self.repetition_detection,
         )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_tool_exec_time(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        for message in data.get("messages", []):
+            if not isinstance(message, dict) or "tool_exec_time" not in message:
+                continue
+            tool_exec_time = message["tool_exec_time"]
+            invalid_tool_exec_time = (
+                isinstance(tool_exec_time, bool)
+                or not isinstance(tool_exec_time, (int, float))
+                or tool_exec_time < 0
+            )
+            if not invalid_tool_exec_time:
+                try:
+                    invalid_tool_exec_time = not math.isfinite(
+                        float(tool_exec_time)
+                    )
+                except (OverflowError, TypeError, ValueError):
+                    invalid_tool_exec_time = True
+            if invalid_tool_exec_time:
+                raise VLLMValidationError(
+                    "`tool_exec_time` must be a non-negative finite number.",
+                    parameter="tool_exec_time",
+                    value=tool_exec_time,
+                )
+
+        return data
 
     @model_validator(mode="before")
     @classmethod

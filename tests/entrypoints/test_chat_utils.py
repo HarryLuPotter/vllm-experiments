@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 import torch
+from pydantic import ValidationError
 
 from vllm.assets.audio import AudioAsset
 from vllm.assets.image import ImageAsset
@@ -16,6 +17,7 @@ from vllm.entrypoints.chat_utils import (
     parse_chat_messages,
     parse_chat_messages_async,
 )
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.inputs import MultiModalDataDict, MultiModalUUIDDict
 from vllm.multimodal.utils import (
     encode_audio_url,
@@ -701,6 +703,54 @@ def test_parse_chat_messages_empty_system(
         {"role": "system", "content": [{"type": "text", "text": ""}]},
         {"role": "user", "content": [{"type": "text", "text": "Who are you?"}]},
     ]
+
+
+def test_parse_chat_messages_preserves_tool_exec_time(mistral_model_config):
+    request = ChatCompletionRequest(
+        model="test-model",
+        messages=[
+            {
+                "role": "tool",
+                "tool_call_id": "call_test",
+                "content": "tool output",
+                "tool_exec_time": 13.27,
+            }
+        ],
+    )
+
+    conversation, _, _ = parse_chat_messages(
+        request.messages,
+        mistral_model_config,
+        content_format="string",
+    )
+
+    assert conversation == [
+        {
+            "role": "tool",
+            "content": "tool output",
+            "tool_call_id": "call_test",
+            "tool_exec_time": 13.27,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "tool_exec_time",
+    [-0.1, float("inf"), float("nan"), True, "1.0", None],
+)
+def test_chat_completion_request_rejects_invalid_tool_exec_time(tool_exec_time):
+    with pytest.raises(ValidationError):
+        ChatCompletionRequest(
+            model="test-model",
+            messages=[
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_test",
+                    "content": "tool output",
+                    "tool_exec_time": tool_exec_time,
+                }
+            ],
+        )
 
 
 @pytest.mark.asyncio

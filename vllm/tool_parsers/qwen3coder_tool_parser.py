@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import ast
 import json
+import math
 import uuid
 from collections.abc import Sequence
 from typing import Any
@@ -65,6 +66,15 @@ class Qwen3CoderToolParser(ToolParser):
         self.tool_call_parameter_regex = re.compile(
             r"<parameter=(.*?)(?:</parameter>|(?=<parameter=)|(?=</function>)|$)",
             re.DOTALL,
+        )
+        self.predicted_tool_execution_time_regex = re.compile(
+            r"<predicted_tool_execution_time_seconds>"
+            r"(.*?)"
+            r"</predicted_tool_execution_time_seconds>",
+            re.DOTALL,
+        )
+        self.non_negative_decimal_regex = re.compile(
+            r"(?:0|[1-9]\d*)(?:\.\d+)?"
         )
 
         if not self.model_tokenizer:
@@ -275,8 +285,7 @@ class Qwen3CoderToolParser(ToolParser):
             ),
         )
 
-    def _get_function_calls(self, model_output: str) -> list[str]:
-        # Find all tool calls
+    def _get_tool_call_blocks(self, model_output: str) -> list[str]:
         matched_ranges = self.tool_call_regex.findall(model_output)
         raw_tool_calls = [
             match[0] if match[0] else match[1] for match in matched_ranges
@@ -285,15 +294,29 @@ class Qwen3CoderToolParser(ToolParser):
         # Back-off strategy if no tool_call tags found
         if len(raw_tool_calls) == 0:
             raw_tool_calls = [model_output]
+        return raw_tool_calls
 
-        raw_function_calls = []
-        for tool_call in raw_tool_calls:
-            raw_function_calls.extend(self.tool_call_function_regex.findall(tool_call))
+    def _get_function_calls(self, tool_call: str) -> list[str]:
+        raw_function_calls = self.tool_call_function_regex.findall(tool_call)
 
         function_calls = [
             match[0] if match[0] else match[1] for match in raw_function_calls
         ]
         return function_calls
+
+    def _parse_predicted_tool_execution_time(
+        self, tool_call: str
+    ) -> float | None:
+        matches = self.predicted_tool_execution_time_regex.findall(tool_call)
+        if len(matches) != 1:
+            return None
+
+        value = matches[0].strip()
+        if self.non_negative_decimal_regex.fullmatch(value) is None:
+            return None
+
+        parsed_value = float(value)
+        return parsed_value if math.isfinite(parsed_value) else None
 
     def extract_tool_calls(
         self,
@@ -307,19 +330,35 @@ class Qwen3CoderToolParser(ToolParser):
             )
 
         try:
-            function_calls = self._get_function_calls(model_output)
-            if len(function_calls) == 0:
+            parsed_tool_calls: list[ToolCall | None] = []
+            for tool_call_block in self._get_tool_call_blocks(model_output):
+                function_calls = self._get_function_calls(tool_call_block)
+                predicted_tool_execution_time = (
+                    self._parse_predicted_tool_execution_time(tool_call_block)
+                    if len(function_calls) == 1
+                    else None
+                )
+                for function_call_str in function_calls:
+                    tool_call = self._parse_xml_function_call(
+                        function_call_str, request.tools
+                    )
+                    if (
+                        tool_call is not None
+                        and predicted_tool_execution_time is not None
+                    ):
+                        tool_call.predicted_tool_execution_time_seconds = (
+                            predicted_tool_execution_time
+                        )
+                    parsed_tool_calls.append(tool_call)
+
+            if len(parsed_tool_calls) == 0:
                 return ExtractedToolCallInformation(
                     tools_called=False, tool_calls=[], content=model_output
                 )
 
-            tool_calls = [
-                self._parse_xml_function_call(function_call_str, request.tools)
-                for function_call_str in function_calls
-            ]
             # Populate prev_tool_call_arr for serving layer to set finish_reason
             self.prev_tool_call_arr.clear()  # Clear previous calls
-            for tool_call in tool_calls:
+            for tool_call in parsed_tool_calls:
                 if tool_call:
                     self.prev_tool_call_arr.append(
                         {
@@ -333,7 +372,7 @@ class Qwen3CoderToolParser(ToolParser):
             idx = model_output.find(self.tool_call_prefix)
             content_index = content_index if content_index >= 0 else idx
             content = model_output[:content_index]  # .rstrip()
-            valid_tool_calls = [tc for tc in tool_calls if tc is not None]
+            valid_tool_calls = [tc for tc in parsed_tool_calls if tc is not None]
             return ExtractedToolCallInformation(
                 tools_called=(len(valid_tool_calls) > 0),
                 tool_calls=valid_tool_calls,
