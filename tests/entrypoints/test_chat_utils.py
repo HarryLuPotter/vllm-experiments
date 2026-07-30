@@ -4,6 +4,7 @@
 import warnings
 from collections.abc import Mapping
 from typing import Literal
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -705,7 +706,12 @@ def test_parse_chat_messages_empty_system(
     ]
 
 
-def test_parse_chat_messages_preserves_tool_exec_time(mistral_model_config):
+def test_parse_chat_messages_preserves_tool_exec_time():
+    model_config = MagicMock(spec=ModelConfig)
+    model_config.multimodal_config = None
+    model_config.allowed_local_media_path = None
+    model_config.allowed_media_domains = None
+
     request = ChatCompletionRequest(
         model="test-model",
         messages=[
@@ -720,7 +726,7 @@ def test_parse_chat_messages_preserves_tool_exec_time(mistral_model_config):
 
     conversation, _, _ = parse_chat_messages(
         request.messages,
-        mistral_model_config,
+        model_config,
         content_format="string",
     )
 

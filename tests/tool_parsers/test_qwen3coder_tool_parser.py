@@ -3,6 +3,7 @@
 
 import json
 from collections.abc import Generator
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,6 +34,16 @@ def qwen3_tokenizer():
 @pytest.fixture
 def qwen3_tool_parser(qwen3_tokenizer):
     return Qwen3CoderToolParser(qwen3_tokenizer)
+
+
+@pytest.fixture
+def qwen3_prediction_tool_parser():
+    tokenizer = MagicMock()
+    tokenizer.get_vocab.return_value = {
+        "<tool_call>": 1,
+        "</tool_call>": 2,
+    }
+    return Qwen3CoderToolParser(tokenizer)
 
 
 @pytest.fixture
@@ -192,11 +203,11 @@ def make_tool_call_with_prediction(*predictions: str) -> str:
     ],
 )
 def test_extract_tool_call_with_execution_time_prediction(
-    qwen3_tool_parser, sample_tools, prediction, expected
+    qwen3_prediction_tool_parser, sample_tools, prediction, expected
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
 
-    result = qwen3_tool_parser.extract_tool_calls(
+    result = qwen3_prediction_tool_parser.extract_tool_calls(
         make_tool_call_with_prediction(prediction),
         request,
     )
@@ -215,11 +226,11 @@ def test_extract_tool_call_with_execution_time_prediction(
     ["", "-1", "NaN", "inf", "12.5 seconds", "1e3", "1-2"],
 )
 def test_invalid_execution_time_prediction_is_omitted(
-    qwen3_tool_parser, sample_tools, prediction
+    qwen3_prediction_tool_parser, sample_tools, prediction
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
 
-    result = qwen3_tool_parser.extract_tool_calls(
+    result = qwen3_prediction_tool_parser.extract_tool_calls(
         make_tool_call_with_prediction(prediction),
         request,
     )
@@ -234,11 +245,11 @@ def test_invalid_execution_time_prediction_is_omitted(
 
 @pytest.mark.parametrize("predictions", [(), ("1.0", "2.0")])
 def test_missing_or_duplicate_execution_time_prediction_is_omitted(
-    qwen3_tool_parser, sample_tools, predictions
+    qwen3_prediction_tool_parser, sample_tools, predictions
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
 
-    result = qwen3_tool_parser.extract_tool_calls(
+    result = qwen3_prediction_tool_parser.extract_tool_calls(
         make_tool_call_with_prediction(*predictions),
         request,
     )
