@@ -530,28 +530,49 @@ class ChatCompletionRequest(OpenAIBaseModel):
         if not isinstance(data, dict):
             return data
 
-        for message in data.get("messages", []):
-            if not isinstance(message, dict) or "tool_exec_time" not in message:
-                continue
-            tool_exec_time = message["tool_exec_time"]
-            invalid_tool_exec_time = (
-                isinstance(tool_exec_time, bool)
-                or not isinstance(tool_exec_time, (int, float))
-                or tool_exec_time < 0
+        def is_invalid_execution_time(value):
+            invalid = (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value < 0
             )
-            if not invalid_tool_exec_time:
+            if not invalid:
                 try:
-                    invalid_tool_exec_time = not math.isfinite(
-                        float(tool_exec_time)
-                    )
+                    invalid = not math.isfinite(float(value))
                 except (OverflowError, TypeError, ValueError):
-                    invalid_tool_exec_time = True
-            if invalid_tool_exec_time:
-                raise VLLMValidationError(
-                    "`tool_exec_time` must be a non-negative finite number.",
-                    parameter="tool_exec_time",
-                    value=tool_exec_time,
-                )
+                    invalid = True
+            return invalid
+
+        for message in data.get("messages", []):
+            if not isinstance(message, dict):
+                continue
+
+            if "tool_exec_time" in message:
+                tool_exec_time = message["tool_exec_time"]
+                if is_invalid_execution_time(tool_exec_time):
+                    raise VLLMValidationError(
+                        "`tool_exec_time` must be a non-negative finite number.",
+                        parameter="tool_exec_time",
+                        value=tool_exec_time,
+                    )
+
+            for tool_call in message.get("tool_calls") or []:
+                if (
+                    not isinstance(tool_call, dict)
+                    or "predicted_tool_execution_time_seconds"
+                    not in tool_call
+                ):
+                    continue
+                prediction = tool_call[
+                    "predicted_tool_execution_time_seconds"
+                ]
+                if is_invalid_execution_time(prediction):
+                    raise VLLMValidationError(
+                        "`predicted_tool_execution_time_seconds` must be a "
+                        "non-negative finite number.",
+                        parameter="predicted_tool_execution_time_seconds",
+                        value=prediction,
+                    )
 
         return data
 

@@ -740,6 +740,88 @@ def test_parse_chat_messages_preserves_tool_exec_time():
     ]
 
 
+def test_parse_chat_messages_preserves_tool_execution_time_prediction():
+    model_config = MagicMock(spec=ModelConfig)
+    model_config.multimodal_config = None
+    model_config.allowed_local_media_path = None
+    model_config.allowed_media_domains = None
+
+    request = ChatCompletionRequest(
+        model="test-model",
+        messages=[
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_test",
+                        "type": "function",
+                        "function": {
+                            "name": "bash",
+                            "arguments": '{"command":"ls"}',
+                        },
+                        "predicted_tool_execution_time_seconds": 1.25,
+                    }
+                ],
+            }
+        ],
+    )
+
+    conversation, _, _ = parse_chat_messages(
+        request.messages,
+        model_config,
+        content_format="string",
+    )
+
+    assert conversation == [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_test",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": {"command": "ls"},
+                    },
+                    "predicted_tool_execution_time_seconds": 1.25,
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "prediction",
+    [-0.1, float("inf"), float("nan"), True, "1.0", None],
+)
+def test_chat_completion_request_rejects_invalid_tool_execution_time_prediction(
+    prediction,
+):
+    with pytest.raises(ValidationError):
+        ChatCompletionRequest(
+            model="test-model",
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_test",
+                            "type": "function",
+                            "function": {
+                                "name": "bash",
+                                "arguments": '{"command":"ls"}',
+                            },
+                            "predicted_tool_execution_time_seconds": prediction,
+                        }
+                    ],
+                }
+            ],
+        )
+
+
 @pytest.mark.parametrize(
     "tool_exec_time",
     [-0.1, float("inf"), float("nan"), True, "1.0", None],
