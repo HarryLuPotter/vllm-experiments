@@ -29,6 +29,8 @@ from vllm.tool_parsers.abstract_tool_parser import (
 
 logger = init_logger(__name__)
 
+PREDICTED_TOOL_EXECUTION_TIME_FIELD = "predicted_tool_execution_time_seconds"
+
 
 class Qwen3CoderToolParser(ToolParser):
     def __init__(self, tokenizer: TokenizerLike, tools: list[Tool] | None = None):
@@ -99,6 +101,47 @@ class Qwen3CoderToolParser(ToolParser):
     def _generate_tool_call_id(self) -> str:
         """Generate a unique tool call ID."""
         return f"call_{uuid.uuid4().hex[:24]}"
+
+    @classmethod
+    def adjust_tools_for_prompt(
+        cls, tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        for tool in tools:
+            function = tool.get("function")
+            if not isinstance(function, dict):
+                continue
+
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}}
+                function["parameters"] = parameters
+
+            properties = parameters.get("properties")
+            if not isinstance(properties, dict):
+                properties = {}
+                parameters["properties"] = properties
+
+            properties[PREDICTED_TOOL_EXECUTION_TIME_FIELD] = {
+                "type": "number",
+                "minimum": 0,
+                "description": (
+                    "Predict how many seconds this function call will take "
+                    "from execution start until its complete result is "
+                    "available. Use the function name, all arguments, the "
+                    "conversation and reasoning context, and previous "
+                    "actual_tool_execution_time_seconds observations. "
+                    "Output one non-negative finite number."
+                ),
+            }
+
+            required = parameters.get("required")
+            if not isinstance(required, list):
+                required = []
+                parameters["required"] = required
+            if PREDICTED_TOOL_EXECUTION_TIME_FIELD not in required:
+                required.append(PREDICTED_TOOL_EXECUTION_TIME_FIELD)
+
+        return tools
 
     def _reset_streaming_state(self):
         """Reset all streaming state."""
@@ -265,6 +308,7 @@ class Qwen3CoderToolParser(ToolParser):
         param_config = self._get_arguments_config(function_name, tools)
         parameters = function_call_str[end_index + 1 :]
         param_dict = {}
+        predicted_tool_execution_times: list[str] = []
         for match_text in self.tool_call_parameter_regex.findall(parameters):
             idx = match_text.index(">")
             param_name = match_text[:idx]
@@ -275,6 +319,10 @@ class Qwen3CoderToolParser(ToolParser):
             if param_value.endswith("\n"):
                 param_value = param_value[:-1]
 
+            if param_name == PREDICTED_TOOL_EXECUTION_TIME_FIELD:
+                predicted_tool_execution_times.append(param_value)
+                continue
+
             param_dict[param_name] = self._convert_param_value(
                 param_value, param_name, param_config, function_name
             )
@@ -282,6 +330,11 @@ class Qwen3CoderToolParser(ToolParser):
             type="function",
             function=FunctionCall(
                 name=function_name, arguments=json.dumps(param_dict, ensure_ascii=False)
+            ),
+            predicted_tool_execution_time_seconds=(
+                self._parse_execution_time_values(
+                    predicted_tool_execution_times
+                )
             ),
         )
 
@@ -308,10 +361,13 @@ class Qwen3CoderToolParser(ToolParser):
         self, tool_call: str
     ) -> float | None:
         matches = self.predicted_tool_execution_time_regex.findall(tool_call)
-        if len(matches) != 1:
+        return self._parse_execution_time_values(matches)
+
+    def _parse_execution_time_values(self, values: list[str]) -> float | None:
+        if len(values) != 1:
             return None
 
-        value = matches[0].strip()
+        value = values[0].strip()
         if self.non_negative_decimal_regex.fullmatch(value) is None:
             return None
 
@@ -338,15 +394,6 @@ class Qwen3CoderToolParser(ToolParser):
                     if len(function_calls) == 1
                     else None
                 )
-                if (
-                    len(function_calls) == 1
-                    and predicted_tool_execution_time is None
-                ):
-                    logger.warning_once(
-                        "Qwen3 Coder tool call has no valid execution-time "
-                        "prediction. Raw model output: %r",
-                        model_output[:4000],
-                    )
                 for function_call_str in function_calls:
                     tool_call = self._parse_xml_function_call(
                         function_call_str, request.tools

@@ -233,6 +233,8 @@ class OpenAIServingRender:
             tool_dicts = None
         else:
             tool_dicts = [tool.model_dump() for tool in request.tools]
+            if tool_parser is not None:
+                tool_dicts = tool_parser.adjust_tools_for_prompt(tool_dicts)
 
         if not self.use_harmony:
             # Common case.

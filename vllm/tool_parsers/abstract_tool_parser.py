@@ -5,7 +5,7 @@ import importlib
 import os
 from collections.abc import Callable, Sequence
 from functools import cached_property
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from openai.types.responses import (
     ResponseFormatTextJSONSchemaConfig,
@@ -94,6 +94,13 @@ class ToolParser:
                 )
 
         return request
+
+    @classmethod
+    def adjust_tools_for_prompt(
+        cls, tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Adjust prompt-only tool schemas without mutating the API request."""
+        return tools
 
     def extract_tool_calls(
         self, model_output: str, request: ChatCompletionRequest
