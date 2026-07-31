@@ -776,7 +776,7 @@ def test_parse_chat_messages_preserves_tool_execution_time_prediction():
     assert conversation == [
         {
             "role": "assistant",
-            "content": None,
+            "content": "",
             "tool_calls": [
                 {
                     "id": "call_test",
