@@ -32,6 +32,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 )
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.multimodal.encoder_budget import MultiModalBudget
+from vllm.tokenizers import cached_tokenizer_from_config
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -51,6 +52,7 @@ from vllm.v1.core.sched.request_queue import (
     create_request_queue,
 )
 from vllm.v1.core.sched.utils import check_stop, remove_all
+from vllm.v1.core.tool_time_parser import ToolTimePredictionParser
 from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutputs
 from vllm.v1.kv_cache_interface import AttentionSpec, KVCacheConfig
 from vllm.v1.metrics.perf import ModelMetrics, PerfStats
@@ -91,6 +93,10 @@ class Scheduler(SchedulerInterface):
             )
         self.structured_output_manager = structured_output_manager
         self.is_encoder_decoder = vllm_config.model_config.is_encoder_decoder
+        tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
+        self.tool_time_prediction_parser = (
+            ToolTimePredictionParser(tokenizer) if tokenizer is not None else None
+        )
 
         # include_finished_set controls whether a separate set of finished
         # request ids should be included in the EngineCoreOutputs returned
@@ -1416,6 +1422,17 @@ class Scheduler(SchedulerInterface):
                 finish_reason = request.get_finished_reason()
                 finished = self._handle_stopped_request(request)
                 if finished:
+                    if (
+                        request.sampling_params is not None
+                        and self.tool_time_prediction_parser is not None
+                    ):
+                        prediction = self.tool_time_prediction_parser.parse(
+                            request.output_token_ids
+                        )
+                        if prediction is not None:
+                            request.predicted_reuse_deadline = (
+                                time.monotonic() + prediction
+                            )
                     kv_transfer_params = self._free_request(request)
 
                 if status_before_stop == RequestStatus.RUNNING:

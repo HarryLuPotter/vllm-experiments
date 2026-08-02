@@ -434,7 +434,9 @@ class KVCacheManager:
         Args:
             request: The request to free the blocks.
         """
-        self.coordinator.free(request.request_id)
+        self.coordinator.free(
+            request.request_id, request.predicted_reuse_deadline
+        )
 
     def remove_skipped_blocks(
         self, request_id: str, total_computed_tokens: int

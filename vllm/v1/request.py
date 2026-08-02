@@ -162,6 +162,10 @@ class Request:
         # The number of tokens that have been computed remotely.
         self.num_external_computed_tokens = 0
 
+        # Predicted time at which this request's prefix will next be reused.
+        # Set only after normal generation completes.
+        self.predicted_reuse_deadline: float | None = None
+
         self.block_hashes: list[BlockHash] = []
         # Store the block hasher without binding self to avoid creating a
         # reference cycle (Request -> partial -> Request) that prevents

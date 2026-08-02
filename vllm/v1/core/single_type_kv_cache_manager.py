@@ -273,12 +273,16 @@ class SingleTypeKVCacheManager(ABC):
 
         self.num_cached_block[request.request_id] = num_full_blocks
 
-    def free(self, request_id: str) -> None:
+    def free(
+        self, request_id: str, predicted_reuse_deadline: float | None = None
+    ) -> None:
         """
         Free the blocks for the request.
 
         Args:
             request_id: The request ID.
+            predicted_reuse_deadline: Absolute monotonic time at which the
+                request is predicted to reuse its cached blocks.
         """
         # Default to [] in case a request is freed (aborted) before alloc.
         req_blocks = self.req_to_blocks.pop(request_id, [])
@@ -287,7 +291,7 @@ class SingleTypeKVCacheManager(ABC):
         # freed first.
         ordered_blocks = reversed(req_blocks)
 
-        self.block_pool.free_blocks(ordered_blocks)
+        self.block_pool.free_blocks(ordered_blocks, predicted_reuse_deadline)
         self.num_cached_block.pop(request_id, None)
 
     @abstractmethod
@@ -1008,11 +1012,13 @@ class MambaManager(SingleTypeKVCacheManager):
                 self._allocated_block_reqs.add(request_id)
                 return req_blocks[prev_block_len:]
 
-    def free(self, request_id: str) -> None:
+    def free(
+        self, request_id: str, predicted_reuse_deadline: float | None = None
+    ) -> None:
         if self.mamba_cache_mode == "align":
             self._allocated_block_reqs.discard(request_id)
             self.last_state_block_idx.pop(request_id, None)
-        super().free(request_id)
+        super().free(request_id, predicted_reuse_deadline)
 
     def get_num_skipped_tokens(self, num_computed_tokens: int) -> int:
         """

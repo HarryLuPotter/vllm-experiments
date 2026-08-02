@@ -188,15 +188,19 @@ class KVCacheCoordinator(ABC):
         for manager in self.single_type_managers:
             manager.cache_blocks(request, num_computed_tokens)
 
-    def free(self, request_id: str) -> None:
+    def free(
+        self, request_id: str, predicted_reuse_deadline: float | None = None
+    ) -> None:
         """
         Free the blocks for the request.
 
         Args:
             request_id: The request ID.
+            predicted_reuse_deadline: Absolute monotonic time at which the
+                request is predicted to reuse its cached blocks.
         """
         for manager in self.single_type_managers:
-            manager.free(request_id)
+            manager.free(request_id, predicted_reuse_deadline)
 
     def get_num_common_prefix_blocks(self, running_request_id: str) -> list[int]:
         """

@@ -126,6 +126,11 @@ class KVCacheBlock:
     # Whether the block is a null block that should never be cached.
     is_null: bool = False
 
+    # Metadata used by tool-time predictive eviction.
+    predicted_reuse_deadline: float | None = None
+    free_sequence: int = 0
+    heap_generation: int = 0
+
     @property
     def block_hash(self) -> BlockHashWithGroupId | None:
         return self._block_hash
@@ -140,6 +145,7 @@ class KVCacheBlock:
     def reset_hash(self):
         """Reset the block hash when the block is evicted."""
         self._block_hash = None
+        self.predicted_reuse_deadline = None
 
     def __repr__(self) -> str:
         # Use block_id instead of KVCacheBlock object to avoid calling __repr__
