@@ -108,6 +108,7 @@ def _get_expected_values(num_requests: int, prompt_ids: list[int], max_tokens: i
         "vllm:prompt_tokens": [("_total", num_requests * num_prompt_tokens)],
         "vllm:generation_tokens": [("_total", num_requests * max_tokens)],
         "vllm:request_success": [("_total", num_requests)],
+        "vllm:prefix_cache_evictions": [("_total", 0)],
     }
 
 
@@ -185,6 +186,7 @@ EXPECTED_METRICS_V1 = [
     "vllm:kv_cache_usage_perc",
     "vllm:prefix_cache_queries",
     "vllm:prefix_cache_hits",
+    "vllm:prefix_cache_evictions",
     "vllm:num_preemptions_total",
     "vllm:prompt_tokens_total",
     "vllm:generation_tokens_total",

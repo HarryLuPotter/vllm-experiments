@@ -1905,6 +1905,35 @@ def test_maybe_evict_cached_block():
     assert pool.cached_block_hash_to_block._cache == {}
 
 
+def test_prefix_cache_evictions_count_allocation_driven_evictions():
+    manager = KVCacheManager(
+        make_kv_cache_config(16, 4),
+        max_model_len=8192,
+        enable_caching=True,
+        hash_block_size=16,
+        log_stats=True,
+    )
+    pool = manager.block_pool
+    block = pool.blocks[1]
+    block_hash = make_block_hash_with_group_id(BlockHash(b"10"), 1000)
+    block.block_hash = block_hash
+    pool.cached_block_hash_to_block.insert(block_hash, block)
+
+    assert pool.get_new_blocks(1) == [block]
+    stats = manager.make_prefix_cache_stats()
+    assert stats is not None
+    assert stats.evictions == 1
+    stats = manager.make_prefix_cache_stats()
+    assert stats is not None
+    assert stats.evictions == 0
+
+    # Allocating a never-cached block is not an eviction.
+    pool.get_new_blocks(1)
+    stats = manager.make_prefix_cache_stats()
+    assert stats is not None
+    assert stats.evictions == 0
+
+
 @pytest.mark.parametrize("blocks_to_cache", [2, 3, 10])
 def test_kv_cache_events(blocks_to_cache: int):
     block_size = 16
