@@ -179,6 +179,7 @@ class BlockPool:
         self.kv_event_queue: list[KVCacheEvent] = []
 
         self.metrics_collector = metrics_collector
+        self._num_prefix_cache_evictions = 0
 
     def get_cached_block(
         self, block_hash: BlockHash, kv_cache_group_ids: list[int]
@@ -336,7 +337,8 @@ class BlockPool:
         # In order to only iterate the list once, we duplicated code a bit
         if self.enable_caching:
             for block in ret:
-                self._maybe_evict_cached_block(block)
+                if self._maybe_evict_cached_block(block):
+                    self._num_prefix_cache_evictions += 1
                 assert block.ref_cnt == 0
                 block.ref_cnt += 1
                 if self.metrics_collector:
@@ -348,6 +350,12 @@ class BlockPool:
                 if self.metrics_collector:
                     self.metrics_collector.on_block_allocated(block)
         return ret
+
+    def take_prefix_cache_evictions(self) -> int:
+        """Return and reset allocation-driven prefix cache evictions."""
+        num_evictions = self._num_prefix_cache_evictions
+        self._num_prefix_cache_evictions = 0
+        return num_evictions
 
     def _maybe_evict_cached_block(self, block: KVCacheBlock) -> bool:
         """

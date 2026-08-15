@@ -128,6 +128,9 @@ class PrefixCacheStats(BaseCacheStats):
     preempted_hits: int = 0
     """The `hits` number for preempted requests."""
 
+    evictions: int = 0
+    """The number of cached blocks evicted to satisfy block allocation."""
+
     def record(self, num_tokens: int, num_hits: int, preempted: bool) -> None:
         """Aggregate request information into the stats."""
         if preempted:

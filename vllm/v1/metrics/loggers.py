@@ -522,6 +522,18 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
             counter_prefix_cache_hits, per_engine_labelvalues
         )
 
+        counter_prefix_cache_evictions = self._counter_cls(
+            name="vllm:prefix_cache_evictions",
+            documentation=(
+                "Prefix cache evictions, in terms of cached KV blocks removed "
+                "to satisfy block allocation."
+            ),
+            labelnames=labelnames,
+        )
+        self.counter_prefix_cache_evictions = create_metric_per_engine(
+            counter_prefix_cache_evictions, per_engine_labelvalues
+        )
+
         #
         # External - KV connector prefix cache
         #
@@ -1050,6 +1062,9 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
             )
             self.counter_prefix_cache_hits[engine_idx].inc(
                 scheduler_stats.prefix_cache_stats.hits
+            )
+            self.counter_prefix_cache_evictions[engine_idx].inc(
+                scheduler_stats.prefix_cache_stats.evictions
             )
 
             if scheduler_stats.connector_prefix_cache_stats is not None:
