@@ -1915,6 +1915,10 @@ def test_prefix_cache_evictions_count_allocation_driven_evictions():
     )
     pool = manager.block_pool
     block = pool.get_new_blocks(1)[0]
+    stats = manager.make_prefix_cache_stats()
+    assert stats is not None
+    assert stats.evictions == 0
+
     request = make_request("0", list(range(16)), 16, sha256)
     pool.cache_full_blocks(request, [block], 0, 1, 16, 0)
     pool.free_blocks([block])
@@ -1924,12 +1928,6 @@ def test_prefix_cache_evictions_count_allocation_driven_evictions():
     stats = manager.make_prefix_cache_stats()
     assert stats is not None
     assert stats.evictions == 1
-    stats = manager.make_prefix_cache_stats()
-    assert stats is not None
-    assert stats.evictions == 0
-
-    # Allocating a never-cached block is not an eviction.
-    pool.get_new_blocks(1)
     stats = manager.make_prefix_cache_stats()
     assert stats is not None
     assert stats.evictions == 0
