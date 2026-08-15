@@ -1914,12 +1914,13 @@ def test_prefix_cache_evictions_count_allocation_driven_evictions():
         log_stats=True,
     )
     pool = manager.block_pool
-    block = pool.blocks[1]
-    block_hash = make_block_hash_with_group_id(BlockHash(b"10"), 1000)
-    block.block_hash = block_hash
-    pool.cached_block_hash_to_block.insert(block_hash, block)
+    block = pool.get_new_blocks(1)[0]
+    request = make_request("0", list(range(16)), 16, sha256)
+    pool.cache_full_blocks(request, [block], 0, 1, 16, 0)
+    pool.free_blocks([block])
 
-    assert pool.get_new_blocks(1) == [block]
+    # Consume both never-cached blocks, then the cached block.
+    assert block in pool.get_new_blocks(3)
     stats = manager.make_prefix_cache_stats()
     assert stats is not None
     assert stats.evictions == 1
