@@ -1796,7 +1796,7 @@ async def test_tool_choice_validation_without_parser():
 
 
 @pytest.mark.asyncio
-async def test_non_streaming_tool_call_preserves_execution_time_prediction():
+async def test_non_streaming_tool_call_preserves_round_trip_prediction():
     class PredictionToolParser:
         def __init__(self, tokenizer, tools):
             pass
@@ -1811,7 +1811,7 @@ async def test_non_streaming_tool_call_preserves_execution_time_prediction():
                             name="bash",
                             arguments='{"command":"sleep 1"}',
                         ),
-                        predicted_tool_execution_time_seconds=1.25,
+                        predicted_tool_round_trip_seconds=1.25,
                     )
                 ],
                 content=None,
@@ -1878,7 +1878,7 @@ async def test_non_streaming_tool_call_preserves_execution_time_prediction():
 
     assert isinstance(response, ChatCompletionResponse)
     tool_call = response.choices[0].message.tool_calls[0]
-    assert tool_call.predicted_tool_execution_time_seconds == 1.25
+    assert tool_call.predicted_tool_round_trip_seconds == 1.25
     assert tool_call.model_dump() == {
         "id": "call_prediction",
         "type": "function",
@@ -1886,7 +1886,7 @@ async def test_non_streaming_tool_call_preserves_execution_time_prediction():
             "name": "bash",
             "arguments": '{"command":"sleep 1"}',
         },
-        "predicted_tool_execution_time_seconds": 1.25,
+        "predicted_tool_round_trip_seconds": 1.25,
     }
 
 

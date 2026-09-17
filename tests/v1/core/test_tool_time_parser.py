@@ -31,7 +31,7 @@ def test_parse_valid_prediction(value: str, expected: float):
     output = (
         "<think>reasoning</think>\n<tool_call>\n<function=bash>\n"
         "<parameter=command>\nls -la\n</parameter>\n"
-        "<parameter=predicted_tool_execution_time_seconds>\n"
+        "<parameter=predicted_tool_round_trip_seconds>\n"
         f"{value}\n"
         "</parameter>\n</function>\n</tool_call><|im_end|>"
     )
@@ -54,27 +54,28 @@ def test_parse_valid_prediction(value: str, expected: float):
     ],
 )
 def test_invalid_prediction_is_omitted(value: str):
-    output = (
-        "<parameter=predicted_tool_execution_time_seconds>"
-        f"{value}</parameter>"
-    )
+    output = f"<parameter=predicted_tool_round_trip_seconds>{value}</parameter>"
     assert parse(output) is None
 
 
 def test_missing_or_duplicate_prediction_is_omitted():
     assert parse("<tool_call></tool_call>") is None
-    prediction = (
-        "<parameter=predicted_tool_execution_time_seconds>1</parameter>"
-    )
+    prediction = "<parameter=predicted_tool_round_trip_seconds>1</parameter>"
     assert parse(prediction + prediction) is None
 
 
 def test_incomplete_prediction_is_omitted():
-    assert (
-        parse("<parameter=predicted_tool_execution_time_seconds>12.5") is None
-    )
+    assert parse("<parameter=predicted_tool_round_trip_seconds>12.5") is None
 
 
 def test_empty_tokens_are_omitted_without_decoding():
     parser = ToolTimePredictionParser(FakeTokenizer("unused"))  # type: ignore[arg-type]
     assert parser.parse([]) is None
+
+
+def test_tool_names_are_uniform_but_multiple_calls_have_no_deadline():
+    prediction = "<parameter=predicted_tool_round_trip_seconds>1</parameter>"
+    assert (
+        parse(f"<tool_call><function=finish>{prediction}</function></tool_call>") == 1.0
+    )
+    assert parse(f"<tool_call>{prediction}</tool_call><tool_call></tool_call>") is None

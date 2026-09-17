@@ -442,7 +442,14 @@ _running_tasks: set[asyncio.Task] = set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    tool_time_tracker = None
     try:
+        args = getattr(app.state, "args", None)
+        if getattr(args, "tool_call_parser", None) == "qwen3_coder":
+            from vllm.entrypoints.openai.tool_time import ToolTimeTracker, log_directory
+
+            tool_time_tracker = ToolTimeTracker(log_directory())
+            app.state.tool_time_tracker = tool_time_tracker
         if app.state.log_stats:
             engine_client: EngineClient = app.state.engine_client
 
@@ -467,4 +474,8 @@ async def lifespan(app: FastAPI):
                 task.cancel()
     finally:
         # Ensure app state including engine ref is gc'd
-        del app.state
+        try:
+            if tool_time_tracker is not None:
+                await asyncio.to_thread(tool_time_tracker.close)
+        finally:
+            del app.state

@@ -1499,8 +1499,8 @@ class OpenAIServingChat(OpenAIServing):
                                 tool_call_class(
                                     id=tc.id,
                                     function=tc,
-                                    predicted_tool_execution_time_seconds=(
-                                        tc.predicted_tool_execution_time_seconds
+                                    predicted_tool_round_trip_seconds=(
+                                        tc.predicted_tool_round_trip_seconds
                                     ),
                                 )
                             )
@@ -1512,8 +1512,8 @@ class OpenAIServingChat(OpenAIServing):
                                 tool_call_items.append(
                                     tool_call_class(
                                         function=tc,
-                                        predicted_tool_execution_time_seconds=(
-                                            tc.predicted_tool_execution_time_seconds
+                                        predicted_tool_round_trip_seconds=(
+                                            tc.predicted_tool_round_trip_seconds
                                         ),
                                     )
                                 )
@@ -1527,8 +1527,8 @@ class OpenAIServingChat(OpenAIServing):
                                     tool_call_class(
                                         id=generated_id,
                                         function=tc,
-                                        predicted_tool_execution_time_seconds=(
-                                            tc.predicted_tool_execution_time_seconds
+                                        predicted_tool_round_trip_seconds=(
+                                            tc.predicted_tool_round_trip_seconds
                                         ),
                                     )
                                 )

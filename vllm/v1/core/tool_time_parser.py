@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Extract tool execution-time predictions from completed model output."""
+"""Extract tool round-trip predictions from completed model output."""
 
 import math
-import re
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from vllm.tokenizers import TokenizerLike
+import regex as re
 
-_PREDICTION_PARAMETER = "predicted_tool_execution_time_seconds"
+if TYPE_CHECKING:
+    from vllm.tokenizers import TokenizerLike
+
+_PREDICTION_PARAMETER = "predicted_tool_round_trip_seconds"
 _OPEN_TAG = f"<parameter={_PREDICTION_PARAMETER}>"
 _CLOSE_TAG = "</parameter>"
 _NON_NEGATIVE_DECIMAL = r"(?:0|[1-9]\d*)(?:\.\d+)?"
@@ -25,7 +28,7 @@ _PREDICTION_PATTERN = re.compile(
 class ToolTimePredictionParser:
     """Qwen3 Coder parser used by the KV-cache eviction policy."""
 
-    def __init__(self, tokenizer: TokenizerLike):
+    def __init__(self, tokenizer: "TokenizerLike"):
         self.tokenizer = tokenizer
 
     def parse(self, output_token_ids: Sequence[int]) -> float | None:
@@ -35,6 +38,8 @@ class ToolTimePredictionParser:
         model_output = self.tokenizer.decode(
             list(output_token_ids), skip_special_tokens=False
         )
+        if model_output.count("<tool_call>") > 1:
+            return None
         if model_output.count(_OPEN_TAG) != 1:
             return None
 

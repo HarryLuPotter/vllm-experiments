@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.entrypoints.openai.completion.protocol import CompletionRequest
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.openai.tool_time import get_tracker
 from vllm.entrypoints.openai.utils import validate_json_request
 from vllm.entrypoints.serve.disagg.protocol import GenerateRequest
 from vllm.entrypoints.serve.render.serving import OpenAIServingRender
@@ -40,6 +41,16 @@ async def render_chat_completion(request: ChatCompletionRequest, raw_request: Re
             "The model does not support Chat Completions Render API"
         )
 
+    tracker = get_tracker(raw_request)
+    if tracker is not None:
+        request = request.model_copy(
+            update={
+                "messages": tracker.prepare(
+                    request.messages,
+                    arrived_at=None,
+                )
+            }
+        )
     result = await handler.render_chat_request(request)
 
     if isinstance(result, ErrorResponse):

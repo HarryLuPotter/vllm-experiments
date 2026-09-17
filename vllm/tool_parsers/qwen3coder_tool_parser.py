@@ -29,7 +29,7 @@ from vllm.tool_parsers.abstract_tool_parser import (
 
 logger = init_logger(__name__)
 
-PREDICTED_TOOL_EXECUTION_TIME_FIELD = "predicted_tool_execution_time_seconds"
+PREDICTED_TOOL_ROUND_TRIP_FIELD = "predicted_tool_round_trip_seconds"
 
 
 class Qwen3CoderToolParser(ToolParser):
@@ -69,15 +69,13 @@ class Qwen3CoderToolParser(ToolParser):
             r"<parameter=(.*?)(?:</parameter>|(?=<parameter=)|(?=</function>)|$)",
             re.DOTALL,
         )
-        self.predicted_tool_execution_time_regex = re.compile(
-            r"<predicted_tool_execution_time_seconds>"
+        self.predicted_tool_round_trip_regex = re.compile(
+            r"<predicted_tool_round_trip_seconds>"
             r"(.*?)"
-            r"</predicted_tool_execution_time_seconds>",
+            r"</predicted_tool_round_trip_seconds>",
             re.DOTALL,
         )
-        self.non_negative_decimal_regex = re.compile(
-            r"(?:0|[1-9]\d*)(?:\.\d+)?"
-        )
+        self.non_negative_decimal_regex = re.compile(r"(?:0|[1-9]\d*)(?:\.\d+)?")
 
         if not self.model_tokenizer:
             raise ValueError(
@@ -121,15 +119,16 @@ class Qwen3CoderToolParser(ToolParser):
                 properties = {}
                 parameters["properties"] = properties
 
-            properties[PREDICTED_TOOL_EXECUTION_TIME_FIELD] = {
+            properties[PREDICTED_TOOL_ROUND_TRIP_FIELD] = {
                 "type": "number",
                 "minimum": 0,
                 "description": (
-                    "Predict how many seconds this function call will take "
-                    "from execution start until its complete result is "
-                    "available. Use the function name, all arguments, the "
+                    "Predict seconds from the server sending this tool call "
+                    "until the next request carrying its result reaches the "
+                    "server, including tool execution, network and client "
+                    "processing. Use the function name, all arguments, the "
                     "conversation and reasoning context, and previous "
-                    "actual_tool_execution_time_seconds observations. "
+                    "observed_tool_round_trip_seconds observations. "
                     "Output one non-negative finite number."
                 ),
             }
@@ -138,8 +137,8 @@ class Qwen3CoderToolParser(ToolParser):
             if not isinstance(required, list):
                 required = []
                 parameters["required"] = required
-            if PREDICTED_TOOL_EXECUTION_TIME_FIELD not in required:
-                required.append(PREDICTED_TOOL_EXECUTION_TIME_FIELD)
+            if PREDICTED_TOOL_ROUND_TRIP_FIELD not in required:
+                required.append(PREDICTED_TOOL_ROUND_TRIP_FIELD)
 
         return tools
 
@@ -308,7 +307,7 @@ class Qwen3CoderToolParser(ToolParser):
         param_config = self._get_arguments_config(function_name, tools)
         parameters = function_call_str[end_index + 1 :]
         param_dict = {}
-        predicted_tool_execution_times: list[str] = []
+        predicted_tool_round_trips: list[str] = []
         for match_text in self.tool_call_parameter_regex.findall(parameters):
             idx = match_text.index(">")
             param_name = match_text[:idx]
@@ -319,8 +318,8 @@ class Qwen3CoderToolParser(ToolParser):
             if param_value.endswith("\n"):
                 param_value = param_value[:-1]
 
-            if param_name == PREDICTED_TOOL_EXECUTION_TIME_FIELD:
-                predicted_tool_execution_times.append(param_value)
+            if param_name == PREDICTED_TOOL_ROUND_TRIP_FIELD:
+                predicted_tool_round_trips.append(param_value)
                 continue
 
             param_dict[param_name] = self._convert_param_value(
@@ -331,10 +330,8 @@ class Qwen3CoderToolParser(ToolParser):
             function=FunctionCall(
                 name=function_name, arguments=json.dumps(param_dict, ensure_ascii=False)
             ),
-            predicted_tool_execution_time_seconds=(
-                self._parse_execution_time_values(
-                    predicted_tool_execution_times
-                )
+            predicted_tool_round_trip_seconds=(
+                self._parse_round_trip_values(predicted_tool_round_trips)
             ),
         )
 
@@ -357,13 +354,11 @@ class Qwen3CoderToolParser(ToolParser):
         ]
         return function_calls
 
-    def _parse_predicted_tool_execution_time(
-        self, tool_call: str
-    ) -> float | None:
-        matches = self.predicted_tool_execution_time_regex.findall(tool_call)
-        return self._parse_execution_time_values(matches)
+    def _parse_predicted_tool_round_trip(self, tool_call: str) -> float | None:
+        matches = self.predicted_tool_round_trip_regex.findall(tool_call)
+        return self._parse_round_trip_values(matches)
 
-    def _parse_execution_time_values(self, values: list[str]) -> float | None:
+    def _parse_round_trip_values(self, values: list[str]) -> float | None:
         if len(values) != 1:
             return None
 
@@ -389,8 +384,8 @@ class Qwen3CoderToolParser(ToolParser):
             parsed_tool_calls: list[ToolCall | None] = []
             for tool_call_block in self._get_tool_call_blocks(model_output):
                 function_calls = self._get_function_calls(tool_call_block)
-                predicted_tool_execution_time = (
-                    self._parse_predicted_tool_execution_time(tool_call_block)
+                predicted_tool_round_trip = (
+                    self._parse_predicted_tool_round_trip(tool_call_block)
                     if len(function_calls) == 1
                     else None
                 )
@@ -398,12 +393,9 @@ class Qwen3CoderToolParser(ToolParser):
                     tool_call = self._parse_xml_function_call(
                         function_call_str, request.tools
                     )
-                    if (
-                        tool_call is not None
-                        and predicted_tool_execution_time is not None
-                    ):
-                        tool_call.predicted_tool_execution_time_seconds = (
-                            predicted_tool_execution_time
+                    if tool_call is not None and predicted_tool_round_trip is not None:
+                        tool_call.predicted_tool_round_trip_seconds = (
+                            predicted_tool_round_trip
                         )
                     parsed_tool_calls.append(tool_call)
 

@@ -706,7 +706,7 @@ def test_parse_chat_messages_empty_system(
     ]
 
 
-def test_parse_chat_messages_preserves_tool_exec_time():
+def test_parse_chat_messages_preserves_internal_round_trip_observation():
     model_config = MagicMock(spec=ModelConfig)
     model_config.multimodal_config = None
     model_config.allowed_local_media_path = None
@@ -719,10 +719,12 @@ def test_parse_chat_messages_preserves_tool_exec_time():
                 "role": "tool",
                 "tool_call_id": "call_test",
                 "content": "tool output",
-                "tool_exec_time": 13.27,
             }
         ],
     )
+
+    # Observations are populated internally after request validation.
+    request.messages[0]["observed_tool_round_trip_seconds"] = 13.27
 
     conversation, _, _ = parse_chat_messages(
         request.messages,
@@ -735,12 +737,12 @@ def test_parse_chat_messages_preserves_tool_exec_time():
             "role": "tool",
             "content": "tool output",
             "tool_call_id": "call_test",
-            "tool_exec_time": 13.27,
+            "observed_tool_round_trip_seconds": 13.27,
         }
     ]
 
 
-def test_parse_chat_messages_preserves_tool_execution_time_prediction():
+def test_parse_chat_messages_preserves_tool_round_trip_prediction():
     model_config = MagicMock(spec=ModelConfig)
     model_config.multimodal_config = None
     model_config.allowed_local_media_path = None
@@ -760,7 +762,7 @@ def test_parse_chat_messages_preserves_tool_execution_time_prediction():
                             "name": "bash",
                             "arguments": '{"command":"ls"}',
                         },
-                        "predicted_tool_execution_time_seconds": 1.25,
+                        "predicted_tool_round_trip_seconds": 1.25,
                     }
                 ],
             }
@@ -785,7 +787,7 @@ def test_parse_chat_messages_preserves_tool_execution_time_prediction():
                         "name": "bash",
                         "arguments": {"command": "ls"},
                     },
-                    "predicted_tool_execution_time_seconds": 1.25,
+                    "predicted_tool_round_trip_seconds": 1.25,
                 }
             ],
         }
@@ -796,7 +798,7 @@ def test_parse_chat_messages_preserves_tool_execution_time_prediction():
     "prediction",
     [-0.1, float("inf"), float("nan"), True, "1.0", None],
 )
-def test_chat_completion_request_rejects_invalid_tool_execution_time_prediction(
+def test_chat_completion_request_rejects_invalid_tool_round_trip_prediction(
     prediction,
 ):
     with pytest.raises(ValidationError):
@@ -814,28 +816,9 @@ def test_chat_completion_request_rejects_invalid_tool_execution_time_prediction(
                                 "name": "bash",
                                 "arguments": '{"command":"ls"}',
                             },
-                            "predicted_tool_execution_time_seconds": prediction,
+                            "predicted_tool_round_trip_seconds": prediction,
                         }
                     ],
-                }
-            ],
-        )
-
-
-@pytest.mark.parametrize(
-    "tool_exec_time",
-    [-0.1, float("inf"), float("nan"), True, "1.0", None],
-)
-def test_chat_completion_request_rejects_invalid_tool_exec_time(tool_exec_time):
-    with pytest.raises(ValidationError):
-        ChatCompletionRequest(
-            model="test-model",
-            messages=[
-                {
-                    "role": "tool",
-                    "tool_call_id": "call_test",
-                    "content": "tool output",
-                    "tool_exec_time": tool_exec_time,
                 }
             ],
         )

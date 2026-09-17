@@ -526,11 +526,11 @@ class ChatCompletionRequest(OpenAIBaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_tool_exec_time(cls, data):
+    def validate_tool_round_trip_prediction(cls, data):
         if not isinstance(data, dict):
             return data
 
-        def is_invalid_execution_time(value):
+        def is_invalid_round_trip(value):
             invalid = (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
@@ -547,30 +547,18 @@ class ChatCompletionRequest(OpenAIBaseModel):
             if not isinstance(message, dict):
                 continue
 
-            if "tool_exec_time" in message:
-                tool_exec_time = message["tool_exec_time"]
-                if is_invalid_execution_time(tool_exec_time):
-                    raise VLLMValidationError(
-                        "`tool_exec_time` must be a non-negative finite number.",
-                        parameter="tool_exec_time",
-                        value=tool_exec_time,
-                    )
-
             for tool_call in message.get("tool_calls") or []:
                 if (
                     not isinstance(tool_call, dict)
-                    or "predicted_tool_execution_time_seconds"
-                    not in tool_call
+                    or "predicted_tool_round_trip_seconds" not in tool_call
                 ):
                     continue
-                prediction = tool_call[
-                    "predicted_tool_execution_time_seconds"
-                ]
-                if is_invalid_execution_time(prediction):
+                prediction = tool_call["predicted_tool_round_trip_seconds"]
+                if is_invalid_round_trip(prediction):
                     raise VLLMValidationError(
-                        "`predicted_tool_execution_time_seconds` must be a "
+                        "`predicted_tool_round_trip_seconds` must be a "
                         "non-negative finite number.",
-                        parameter="predicted_tool_execution_time_seconds",
+                        parameter="predicted_tool_round_trip_seconds",
                         value=prediction,
                     )
 

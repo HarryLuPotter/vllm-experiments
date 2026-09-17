@@ -179,6 +179,13 @@ def build_app(
         app = FastAPI(lifespan=lifespan)
     app.state.args = args
 
+    if getattr(args, "tool_call_parser", None) == "qwen3_coder":
+        from vllm.entrypoints.openai.tool_time import ToolTimeMiddleware
+
+        if (getattr(args, "api_server_count", None) or 1) != 1:
+            raise ValueError("Tool-time observation requires one API server process")
+        app.add_middleware(ToolTimeMiddleware)
+
     from vllm.entrypoints.serve import register_vllm_serve_api_routers
 
     register_vllm_serve_api_routers(app)

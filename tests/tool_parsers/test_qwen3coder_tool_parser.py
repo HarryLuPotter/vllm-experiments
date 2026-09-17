@@ -19,7 +19,7 @@ from vllm.entrypoints.openai.engine.protocol import (
 from vllm.tokenizers import TokenizerLike, get_tokenizer
 from vllm.tokenizers.detokenizer_utils import detokenize_incrementally
 from vllm.tool_parsers.qwen3coder_tool_parser import (
-    PREDICTED_TOOL_EXECUTION_TIME_FIELD,
+    PREDICTED_TOOL_ROUND_TRIP_FIELD,
     Qwen3CoderToolParser,
 )
 from vllm.tool_parsers.qwen3xml_tool_parser import Qwen3XMLToolParser
@@ -177,9 +177,9 @@ def test_extract_tool_calls_no_tools(qwen3_tool_parser_parametrized):
 
 def make_tool_call_with_prediction(*predictions: str) -> str:
     prediction_blocks = "".join(
-        "\n<predicted_tool_execution_time_seconds>\n"
+        "\n<predicted_tool_round_trip_seconds>\n"
         f"{prediction}\n"
-        "</predicted_tool_execution_time_seconds>"
+        "</predicted_tool_round_trip_seconds>"
         for prediction in predictions
     )
     return (
@@ -196,9 +196,7 @@ def make_tool_call_with_prediction(*predictions: str) -> str:
 
 def make_tool_call_with_prediction_parameter(*predictions: str) -> str:
     prediction_parameters = "".join(
-        f"\n<parameter={PREDICTED_TOOL_EXECUTION_TIME_FIELD}>\n"
-        f"{prediction}\n"
-        "</parameter>"
+        f"\n<parameter={PREDICTED_TOOL_ROUND_TRIP_FIELD}>\n{prediction}\n</parameter>"
         for prediction in predictions
     )
     return (
@@ -213,25 +211,23 @@ def make_tool_call_with_prediction_parameter(*predictions: str) -> str:
     )
 
 
-def test_execution_time_prediction_is_required_in_prompt_tools(sample_tools):
+def test_round_trip_prediction_is_required_in_prompt_tools(sample_tools):
     prompt_tools = [tool.model_dump() for tool in sample_tools]
 
     adjusted_tools = Qwen3CoderToolParser.adjust_tools_for_prompt(prompt_tools)
 
     for tool in adjusted_tools:
         parameters = tool["function"]["parameters"]
-        prediction_schema = parameters["properties"][
-            PREDICTED_TOOL_EXECUTION_TIME_FIELD
-        ]
+        prediction_schema = parameters["properties"][PREDICTED_TOOL_ROUND_TRIP_FIELD]
         assert prediction_schema["type"] == "number"
         assert prediction_schema["minimum"] == 0
-        assert PREDICTED_TOOL_EXECUTION_TIME_FIELD in parameters["required"]
+        assert PREDICTED_TOOL_ROUND_TRIP_FIELD in parameters["required"]
 
     for tool in sample_tools:
         parameters = tool.function.parameters
         assert parameters is not None
         properties = parameters["properties"]
-        assert PREDICTED_TOOL_EXECUTION_TIME_FIELD not in properties
+        assert PREDICTED_TOOL_ROUND_TRIP_FIELD not in properties
 
 
 @pytest.mark.parametrize(
@@ -243,7 +239,7 @@ def test_execution_time_prediction_is_required_in_prompt_tools(sample_tools):
         ("120.0", 120.0),
     ],
 )
-def test_extract_tool_call_with_execution_time_prediction_parameter(
+def test_extract_tool_call_with_round_trip_prediction_parameter(
     qwen3_prediction_tool_parser, sample_tools, prediction, expected
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
@@ -256,7 +252,7 @@ def test_extract_tool_call_with_execution_time_prediction_parameter(
     assert result.tools_called
     tool_call = result.tool_calls[0]
     assert json.loads(tool_call.function.arguments) == {"shape": "circle"}
-    assert tool_call.predicted_tool_execution_time_seconds == expected
+    assert tool_call.predicted_tool_round_trip_seconds == expected
 
 
 @pytest.mark.parametrize(
@@ -272,7 +268,7 @@ def test_extract_tool_call_with_execution_time_prediction_parameter(
         ("1.0", "2.0"),
     ],
 )
-def test_invalid_execution_time_prediction_parameter_is_stripped(
+def test_invalid_round_trip_prediction_parameter_is_stripped(
     qwen3_prediction_tool_parser, sample_tools, predictions
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
@@ -285,8 +281,8 @@ def test_invalid_execution_time_prediction_parameter_is_stripped(
     assert result.tools_called
     tool_call = result.tool_calls[0]
     assert json.loads(tool_call.function.arguments) == {"shape": "circle"}
-    assert tool_call.predicted_tool_execution_time_seconds is None
-    assert PREDICTED_TOOL_EXECUTION_TIME_FIELD not in tool_call.model_dump()
+    assert tool_call.predicted_tool_round_trip_seconds is None
+    assert PREDICTED_TOOL_ROUND_TRIP_FIELD not in tool_call.model_dump()
 
 
 @pytest.mark.parametrize(
@@ -298,7 +294,7 @@ def test_invalid_execution_time_prediction_parameter_is_stripped(
         ("120.0", 120.0),
     ],
 )
-def test_extract_tool_call_with_execution_time_prediction(
+def test_extract_tool_call_with_round_trip_prediction(
     qwen3_prediction_tool_parser, sample_tools, prediction, expected
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
@@ -313,15 +309,15 @@ def test_extract_tool_call_with_execution_time_prediction(
     tool_call = result.tool_calls[0]
     assert tool_call.function.name == "calculate_area"
     assert json.loads(tool_call.function.arguments) == {"shape": "circle"}
-    assert tool_call.predicted_tool_execution_time_seconds == expected
-    assert tool_call.model_dump()["predicted_tool_execution_time_seconds"] == expected
+    assert tool_call.predicted_tool_round_trip_seconds == expected
+    assert tool_call.model_dump()["predicted_tool_round_trip_seconds"] == expected
 
 
 @pytest.mark.parametrize(
     "prediction",
     ["", "-1", "NaN", "inf", "12.5 seconds", "1e3", "1-2"],
 )
-def test_invalid_execution_time_prediction_is_omitted(
+def test_invalid_round_trip_prediction_is_omitted(
     qwen3_prediction_tool_parser, sample_tools, prediction
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
@@ -335,12 +331,12 @@ def test_invalid_execution_time_prediction_is_omitted(
     assert len(result.tool_calls) == 1
     tool_call = result.tool_calls[0]
     assert tool_call.function.name == "calculate_area"
-    assert tool_call.predicted_tool_execution_time_seconds is None
-    assert "predicted_tool_execution_time_seconds" not in tool_call.model_dump()
+    assert tool_call.predicted_tool_round_trip_seconds is None
+    assert "predicted_tool_round_trip_seconds" not in tool_call.model_dump()
 
 
 @pytest.mark.parametrize("predictions", [(), ("1.0", "2.0")])
-def test_missing_or_duplicate_execution_time_prediction_is_omitted(
+def test_missing_or_duplicate_round_trip_prediction_is_omitted(
     qwen3_prediction_tool_parser, sample_tools, predictions
 ):
     request = ChatCompletionRequest(model=MODEL, messages=[], tools=sample_tools)
@@ -354,8 +350,8 @@ def test_missing_or_duplicate_execution_time_prediction_is_omitted(
     assert len(result.tool_calls) == 1
     tool_call = result.tool_calls[0]
     assert tool_call.function.name == "calculate_area"
-    assert tool_call.predicted_tool_execution_time_seconds is None
-    assert "predicted_tool_execution_time_seconds" not in tool_call.model_dump()
+    assert tool_call.predicted_tool_round_trip_seconds is None
+    assert "predicted_tool_round_trip_seconds" not in tool_call.model_dump()
 
 
 @pytest.mark.parametrize(
