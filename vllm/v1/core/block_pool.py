@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-import heapq
 import time
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -27,6 +26,7 @@ from vllm.v1.core.kv_cache_utils import (
     make_block_hash_with_group_id,
     maybe_convert_block_hash,
 )
+from vllm.v1.core.tool_time_eviction import FreeBlockSelectionIndex
 from vllm.v1.request import Request
 
 logger = init_logger(__name__)
@@ -183,156 +183,9 @@ class BlockPool:
         self.metrics_collector = metrics_collector
         self._num_prefix_cache_evictions = 0
 
-        # The doubly linked free queue remains authoritative for membership.
-        # These heaps are lazy indexes used only to select the next free block.
-        self._uncached_free_heap: list[tuple[int, int, int]] = []
-        self._deadline_min_heap: list[tuple[float, int, int, int]] = []
-        self._future_max_heap: list[tuple[float, int, int, int]] = []
-        self._expired_lru_heap: list[tuple[int, int, int]] = []
-        self._free_sequence = 0
-        self._rebuild_tool_time_heaps()
-
-    def _is_valid_free_entry(self, block_id: int, generation: int) -> bool:
-        block = self.blocks[block_id]
-        return (
-            block.heap_generation == generation
-            and block.ref_cnt == 0
-            and not block.is_null
-            and block.prev_free_block is not None
-            and block.next_free_block is not None
+        self._free_block_selection_index = FreeBlockSelectionIndex(
+            self.blocks, self.free_block_queue
         )
-
-    def _index_free_block(
-        self, block: KVCacheBlock, *, assign_sequence: bool = True
-    ) -> None:
-        assert block.ref_cnt == 0 and not block.is_null
-        if assign_sequence:
-            self._free_sequence += 1
-            block.free_sequence = self._free_sequence
-        block.heap_generation += 1
-        generation = block.heap_generation
-        if block.block_hash is None:
-            heapq.heappush(
-                self._uncached_free_heap,
-                (block.free_sequence, block.block_id, generation),
-            )
-            return
-
-        deadline = block.predicted_reuse_deadline
-        if deadline is None:
-            heapq.heappush(
-                self._expired_lru_heap,
-                (block.free_sequence, block.block_id, generation),
-            )
-            return
-
-        heapq.heappush(
-            self._deadline_min_heap,
-            (deadline, block.free_sequence, block.block_id, generation),
-        )
-        heapq.heappush(
-            self._future_max_heap,
-            (-deadline, block.free_sequence, block.block_id, generation),
-        )
-
-    def _invalidate_free_block(self, block: KVCacheBlock) -> None:
-        block.heap_generation += 1
-
-    def _rebuild_tool_time_heaps(self) -> None:
-        self._uncached_free_heap.clear()
-        self._deadline_min_heap.clear()
-        self._future_max_heap.clear()
-        self._expired_lru_heap.clear()
-        self._free_sequence = 0
-        for block in self.free_block_queue.get_all_free_blocks():
-            if not block.is_null:
-                self._index_free_block(block)
-
-    def _maybe_rebuild_tool_time_heaps(self) -> None:
-        num_free_blocks = self.free_block_queue.num_free_blocks
-        num_heap_entries = (
-            len(self._uncached_free_heap)
-            + len(self._deadline_min_heap)
-            + len(self._future_max_heap)
-            + len(self._expired_lru_heap)
-        )
-        if num_heap_entries > num_free_blocks * 6:
-            self._rebuild_tool_time_heaps()
-
-    def _promote_expired_blocks(self, now: float) -> None:
-        # remaining_time = deadline - now, so deadline order stays unchanged;
-        # only the one-way transition into the expired set needs refreshing.
-        while self._deadline_min_heap:
-            deadline, free_sequence, block_id, generation = (
-                self._deadline_min_heap[0]
-            )
-            block = self.blocks[block_id]
-            if (
-                not self._is_valid_free_entry(block_id, generation)
-                or block.block_hash is None
-                or block.predicted_reuse_deadline != deadline
-            ):
-                heapq.heappop(self._deadline_min_heap)
-                continue
-            if deadline > now:
-                return
-            heapq.heappop(self._deadline_min_heap)
-            heapq.heappush(
-                self._expired_lru_heap,
-                (free_sequence, block_id, generation),
-            )
-
-    def _pop_uncached_block(self) -> KVCacheBlock | None:
-        while self._uncached_free_heap:
-            _, block_id, generation = heapq.heappop(self._uncached_free_heap)
-            block = self.blocks[block_id]
-            if self._is_valid_free_entry(block_id, generation) and block.block_hash is None:
-                return block
-        return None
-
-    def _pop_expired_block(self, now: float) -> KVCacheBlock | None:
-        while self._expired_lru_heap:
-            _, block_id, generation = heapq.heappop(self._expired_lru_heap)
-            block = self.blocks[block_id]
-            deadline = block.predicted_reuse_deadline
-            if (
-                self._is_valid_free_entry(block_id, generation)
-                and block.block_hash is not None
-                and (deadline is None or deadline <= now)
-            ):
-                return block
-        return None
-
-    def _pop_future_block(self, now: float) -> KVCacheBlock | None:
-        while self._future_max_heap:
-            neg_deadline, _, block_id, generation = heapq.heappop(
-                self._future_max_heap
-            )
-            block = self.blocks[block_id]
-            deadline = block.predicted_reuse_deadline
-            if (
-                self._is_valid_free_entry(block_id, generation)
-                and block.block_hash is not None
-                and deadline is not None
-                and deadline > now
-                and deadline == -neg_deadline
-            ):
-                return block
-        return None
-
-    def _pop_tool_time_free_block(self, now: float) -> KVCacheBlock:
-        self._promote_expired_blocks(now)
-        block = self._pop_uncached_block()
-        if block is None:
-            block = self._pop_expired_block(now)
-        if block is None:
-            block = self._pop_future_block(now)
-        if block is None:
-            raise RuntimeError("Tool-time free-block index is out of sync")
-
-        self.free_block_queue.remove(block)
-        self._invalidate_free_block(block)
-        return block
 
     def get_cached_block(
         self, block_hash: BlockHash, kv_cache_group_ids: list[int]
@@ -486,8 +339,11 @@ class BlockPool:
             raise ValueError(f"Cannot get {num_blocks} free blocks from the pool")
 
         now = time.monotonic()
-        ret = [self._pop_tool_time_free_block(now) for _ in range(num_blocks)]
-        self._maybe_rebuild_tool_time_heaps()
+        ret = [
+            self._free_block_selection_index.pop_for_allocation(now)
+            for _ in range(num_blocks)
+        ]
+        self._free_block_selection_index.compact_if_needed()
 
         # In order to only iterate the list once, we duplicated code a bit
         if self.enable_caching:
@@ -565,7 +421,7 @@ class BlockPool:
             # ref_cnt=0 means this block is in the free list (i.e. eviction
             # candidate), so remove it.
             if block.ref_cnt == 0 and not block.is_null:
-                self._invalidate_free_block(block)
+                self._free_block_selection_index.invalidate(block)
                 self.free_block_queue.remove(block)
                 block.predicted_reuse_deadline = None
             block.ref_cnt += 1
@@ -599,8 +455,8 @@ class BlockPool:
             )
         self.free_block_queue.append_n(free_blocks)
         for block in free_blocks:
-            self._index_free_block(block)
-        self._maybe_rebuild_tool_time_heaps()
+            self._free_block_selection_index.on_free(block)
+        self._free_block_selection_index.compact_if_needed()
 
     def evict_blocks(self, block_ids: set[int]) -> None:
         """evict blocks from the prefix cache by their block IDs.
@@ -622,7 +478,7 @@ class BlockPool:
             was_free = block.ref_cnt == 0 and not block.is_null
             evicted = self._maybe_evict_cached_block(block)
             if evicted and was_free:
-                self._index_free_block(block, assign_sequence=False)
+                self._free_block_selection_index.on_hash_removed(block)
 
     def reset_prefix_cache(self) -> bool:
         """Reset prefix cache. This function may be used in RLHF
@@ -649,7 +505,7 @@ class BlockPool:
         for block in self.blocks:
             block.reset_hash()
 
-        self._rebuild_tool_time_heaps()
+        self._free_block_selection_index.rebuild()
 
         if self.metrics_collector:
             self.metrics_collector.reset()

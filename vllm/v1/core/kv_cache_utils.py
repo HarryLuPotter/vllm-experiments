@@ -128,8 +128,6 @@ class KVCacheBlock:
 
     # Metadata used by tool-time predictive eviction.
     predicted_reuse_deadline: float | None = None
-    free_sequence: int = 0
-    heap_generation: int = 0
 
     @property
     def block_hash(self) -> BlockHashWithGroupId | None:

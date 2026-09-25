@@ -11,6 +11,7 @@ from vllm.v1.core.kv_cache_utils import (
     KVCacheBlock,
     make_block_hash_with_group_id,
 )
+from vllm.v1.core.tool_time_eviction import reuse_deadline
 
 pytestmark = pytest.mark.cpu_test
 
@@ -88,6 +89,23 @@ def test_deadline_is_promoted_after_time_advances(monkeypatch):
     assert pool.get_new_blocks(1)[0].block_id == soon.block_id
 
 
+def test_queue_allowance_delays_expiration(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr("vllm.v1.core.block_pool.time.monotonic", lambda: now[0])
+    for allocation_time, evict_short in ((115.0, False), (131.0, True)):
+        pool = make_pool(3)
+        short, long = pool.get_new_blocks(2)
+        for block in (short, long):
+            cache_block(pool, block)
+        pool.free_blocks([short], predicted_reuse_deadline=reuse_deadline(100.0, 1.0))
+        pool.free_blocks([long], predicted_reuse_deadline=reuse_deadline(100.0, 10.0))
+
+        now[0] = allocation_time
+        expected = short if evict_short else long
+        assert pool.get_new_blocks(1)[0].block_id == expected.block_id
+        now[0] = 100.0
+
+
 def test_equal_deadlines_preserve_lru_and_suffix_order(monkeypatch):
     monkeypatch.setattr("vllm.v1.core.block_pool.time.monotonic", lambda: 100.0)
     pool = make_pool()
@@ -148,6 +166,21 @@ def test_explicit_hash_eviction_reindexes_block_as_uncached(monkeypatch):
     assert evicted.block_hash is None
     assert evicted.predicted_reuse_deadline is None
     assert pool.get_new_blocks(1)[0].block_id == evicted.block_id
+    assert pool.get_new_blocks(1)[0].block_id == cached.block_id
+
+
+def test_hash_removal_preserves_lru_order(monkeypatch):
+    monkeypatch.setattr("vllm.v1.core.block_pool.time.monotonic", lambda: 100.0)
+    pool = make_pool(3)
+    older, newer = pool.get_new_blocks(2)
+    for block in (older, newer):
+        cache_block(pool, block)
+        pool.free_blocks([block], predicted_reuse_deadline=200.0)
+
+    pool.evict_blocks({newer.block_id})
+    pool.evict_blocks({older.block_id})
+
+    assert pool.get_new_blocks(2) == [older, newer]
 
 
 def test_prefix_reset_rebuilds_free_block_index(monkeypatch):
@@ -176,13 +209,10 @@ def test_lazy_heap_entries_are_compacted(monkeypatch):
         pool.touch([blocks[0]])
         pool.free_blocks([blocks[0]], predicted_reuse_deadline=200.0)
 
-    num_heap_entries = (
-        len(pool._uncached_free_heap)
-        + len(pool._deadline_min_heap)
-        + len(pool._future_max_heap)
-        + len(pool._expired_lru_heap)
+    assert (
+        pool._free_block_selection_index.num_entries <= pool.get_num_free_blocks() * 6
     )
-    assert num_heap_entries <= pool.get_num_free_blocks() * 6
+    assert pool.get_new_blocks(2) == [blocks[1], blocks[0]]
 
 
 @pytest.mark.parametrize("now", [0.0, 100.0, 1000.0])

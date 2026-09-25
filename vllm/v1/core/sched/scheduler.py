@@ -52,6 +52,7 @@ from vllm.v1.core.sched.request_queue import (
     create_request_queue,
 )
 from vllm.v1.core.sched.utils import check_stop, remove_all
+from vllm.v1.core.tool_time_eviction import reuse_deadline
 from vllm.v1.core.tool_time_parser import ToolTimePredictionParser
 from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutputs
 from vllm.v1.kv_cache_interface import AttentionSpec, KVCacheConfig
@@ -1430,8 +1431,8 @@ class Scheduler(SchedulerInterface):
                             request.output_token_ids
                         )
                         if prediction is not None:
-                            request.predicted_reuse_deadline = (
-                                time.monotonic() + prediction
+                            request.predicted_reuse_deadline = reuse_deadline(
+                                time.monotonic(), prediction
                             )
                     kv_transfer_params = self._free_request(request)
 

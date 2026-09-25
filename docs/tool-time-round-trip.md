@@ -71,13 +71,15 @@ Before rendering, the server restores its own predictions and
 timing and prediction extension fields are not trusted as feedback.
 Use the new template; the old template describes a different prediction target.
 
-Core still sets `deadline = monotonic_now + prediction` before freeing KV.
-It does not consult the API table. The offset between Core release and API
-response send is an accepted approximation. All tool names follow the same
-prediction, timing and deadline rules. Calls with no subsequent result remain
-unobserved, including any tool that happens to terminate a client's workflow.
-Multiple tool calls have no predicted deadline. Scheduling and eviction
-selection are otherwise unchanged from `yzl-1`.
+Core sets `deadline = monotonic_now + prediction + 30 seconds` before freeing
+KV. The fixed 30-second allowance covers expected Engine queueing after the
+tool result reaches the API server; it is an experimental assumption, not a
+measured per-request queue delay. Core does not consult the API table. The
+offset between Core release and API response send remains an approximation.
+All tool names follow the same prediction, timing and deadline rules. Calls
+with no subsequent result remain unobserved, including any tool that happens
+to terminate a client's workflow. Multiple tool calls have no predicted
+deadline. The free-block selection rules are otherwise unchanged from `yzl-1`.
 
 ## Mini projects and manual analysis
 
@@ -123,7 +125,7 @@ CPU-only tracker/ASGI tests (no model download):
 In a fully installed vLLM environment also run:
 
 ```bash
-.venv/bin/python -m pytest tests/v1/core/test_tool_time_parser.py tests/v1/core/test_prefix_caching.py tests/tool_parsers/test_qwen3coder_tool_parser.py tests/entrypoints/openai/chat_completion/test_serving_chat.py -v
+.venv/bin/python -m pytest tests/v1/core/test_tool_time_parser.py tests/v1/core/test_tool_time_scheduler.py tests/v1/core/test_tool_time_kv_cache.py tests/v1/core/test_prefix_caching.py tests/tool_parsers/test_qwen3coder_tool_parser.py tests/entrypoints/openai/chat_completion/test_serving_chat.py -v
 ```
 
 The optional mini integration test runs when `mini-agent` is installed in the

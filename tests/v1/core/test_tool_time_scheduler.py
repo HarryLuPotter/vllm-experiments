@@ -15,7 +15,7 @@ pytestmark = pytest.mark.cpu_test
 
 
 @pytest.mark.parametrize(
-    ("prediction", "expected_deadline"), [(12.5, 112.5), (None, None)]
+    ("prediction", "expected_deadline"), [(12.5, 142.5), (None, None)]
 )
 def test_prediction_is_parsed_before_normal_request_is_freed(
     monkeypatch, prediction: float | None, expected_deadline: float | None
